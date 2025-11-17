@@ -1,0 +1,8 @@
+numpy
+pandas
+scipy
+matplotlib
+statsmodels
+arch
+pytest
+#the requirements for covariance estimation project
