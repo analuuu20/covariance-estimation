@@ -1,3 +1,5 @@
+#the requirements for covariance estimation project
+
 numpy
 pandas
 scipy
@@ -8,5 +10,5 @@ pytest
 scikit-learn
 yfinance
 requests
+lxml
 
-#the requirements for covariance estimation project

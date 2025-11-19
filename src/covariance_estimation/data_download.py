@@ -10,19 +10,49 @@ import pandas as pd
 import yfinance as yf
 import requests
 
+# tickers downloaded: S&P 500 from Wikipedia
 
 def get_sp500_tickers():
     """
-    Retrieves the list of S&P 500 company tickers from Wikipedia.
-
-    Returns:
-        A list of ticker symbols as strings
+    Extracts S&P 500 tickers from Wikipedia with robust request    
+    and robust table selection (to avoid errors due diferent notation in Wikipedia).
     """
-    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
-    tables = pd.read_html(url)
-    df = tables[0]
-    return df["Symbol"].tolist()
+    
+    from io import StringIO
 
+    url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
+
+    headers = {
+        "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+                      "AppleWebKit/537.36 (KHTML, like Gecko) "
+                      "Chrome/123.0.0.0 Safari/537.36"
+    }
+
+    response = requests.get(url, headers=headers)
+    if response.status_code != 200:
+        raise ValueError(f"Failed to fetch S&P 500 list. Status code: {response.status_code}")
+
+    # Avoid FutureWarning by wrapping response.text in StringIO
+    dfs = pd.read_html(StringIO(response.text))
+
+    # Find the table that contains the 'Symbol' column
+    table = None
+    for df in dfs:
+        if "Symbol" in df.columns:
+            table = df
+            break
+
+    if table is None:
+        raise ValueError("Could not find S&P 500 table with 'Symbol' column.")
+
+    tickers = table["Symbol"].tolist()
+    tickers = [t.replace(".", "-") for t in tickers]  # Yahoo compatibility
+
+    return tickers
+
+
+
+# price data downloaded from yfinance
 
 def download_prices(tickers, period="5y"):
     """
@@ -39,23 +69,16 @@ def download_prices(tickers, period="5y"):
         ['Open', 'High', 'Low', 'Close', 'Adj Close', 'Volume']
         and tickers as the second level of the column index.
     """
-    print(f"Downloading data for {len(tickers)} tickers...")
+    print(f"Downloading data for {len(tickers)} tickers over period = '{period}'...")
     df = yf.download(tickers, period=period, group_by="ticker", auto_adjust=False)
     return df
 
+# transform multiindex dataframe to flat table
 
-def flatten_to_csv(df, output_path="sp500_prices.csv"):
+def flatten_to_csv(df, output_path="data/sp500_prices_raw.csv"):
     """
-    Converts the MultiIndex DataFrame obtained into a flat DataFrame
-    with columns: Date, Open, High, Low, Close, Volume, Ticker
-
-    Arguments:
-    df : MultiIndex DataFrame returned by yfinance
-    output_path : str
-        File name to save the CSV
-
-    Returns:
-        flat DataFrame
+    Converts yfinance's MultiIndex DataFrame into a clean table with this columns:
+    Date, Open, High, Low, Close, Adj Close, Volume, Ticker
     """
     print("Flattening data...")
 
@@ -66,25 +89,54 @@ def flatten_to_csv(df, output_path="sp500_prices.csv"):
         clean_rows.append(sub)
 
     flat = pd.concat(clean_rows)
-    # Move Date from index to column
-    flat = flat.reset_index()  
-    flat.to_csv(output_path, index=False)
+    flat = flat.reset_index()  # Move Date out of index
 
-    print(f"Saved cleaned dataset to {output_path}")
+    flat.to_csv(output_path, index=False)
+    print(f"Saved RAW flattened dataset to {output_path}")
+
     return flat
 
+# data cleaning: remove NaNs, duplicates, invalid prices and ensure correct types of data
 
+def clean_prices(df):
+    """
+    Cleans the flattened dataset:
+
+    - Remove duplicates
+    - Drop rows with NaNs
+    - Ensure numeric prices
+    - Ensure valid dates
+    - Remove tickers with no data
+    - Sort data by Ticker and Date
+    """
+
+    print("Cleaning dataset...")
+
+    # Convert date column
+    df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+
+    # Convert numeric columns
+    numeric_cols = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
+    for col in numeric_cols:
+        df[col] = pd.to_numeric(df[col], errors="coerce")
+
+    # Drop invalid rows
+    df = df.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"])
+
+    # Drop duplicated rows
+    df = df.drop_duplicates()
+
+    # Drop tickers with zero prices
+    df = df[df["Close"] > 0]
+
+    # Sort the final cleaned dataset
+    df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
+
+    print("Cleaning complete")
+    return df
+
+# data validation: check data quality on the new cleaned dataset
 def validate_prices(df):
-    """
-    Identifies possible issues on the downloaded dataset:
-    
-    Arguments:
-    df : DataFrame
-        Flattened DataFrame from `flatten_to_csv()`.
-
-    Returns:
-    dict: summary of detected issues.
-    """
     summary = {
         "n_rows": len(df),
         "n_tickers": df["Ticker"].nunique(),
@@ -94,71 +146,53 @@ def validate_prices(df):
 
     print("Validation summary:")
     for k, v in summary.items():
-        print(f"  {k}: {v}")
+        print(f" - {k}: {v}")
 
     return summary
 
 
-    def validate_and_clean(df: pd.DataFrame) -> pd.DataFrame:
+# Convenience wrapper to run the full pipeline
+
+def full_download(output_path="data/sp500_prices_clean.csv", period="5y"):
     """
-    Validate and clean price dataframe to be ready to use:
-
-    - Convert price columns to numeric
-    - Ensure Date is a datetime and sorted
-    - Remove duplicate rows, rows with NA values and non-positive prices
-    """
-
-    df = df.copy()
-
-    #Date column is datetime
-    if not np.issubdtype(df["Date"].dtype, np.datetime64):
-        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
-
-    #Sort by date
-    df = df.sort_values("Date")
-
-    #Convert price columns to numeric
-    price_cols = ["Open", "High", "Low", "Close"]
-
-    for col in price_cols:
-        df[col] = pd.to_numeric(df[col], errors="coerce")
-
-    #Remove duplicated rows
-    df = df.drop_duplicates()
-
-    #Remove NA rows
-    df = df.dropna(subset=["Date"] + price_cols)
-
-    #Remove non-positive prices
-    for col in price_cols:
-        df = df[df[col] > 0]
-
-    #Reset index after cleaning
-    df = df.reset_index(drop=True)
-
-    return df
-
-
-def full_download(output_path="sp500_prices.csv"):
-    """
-    Convenience wrapper:
+    Full pipeline:
     1. Get S&P500 tickers
-    2. Download 5 years of daily price data
-    3. Flatten and save to CSV
-    4. Validate the result
+    2. Download open, high, low, close daily price and volume of trading for a chosen period
+    3. Flatten MultiIndex data to a flat table
+    4. CLEAN the flat raw dataset
+    5. Validate the cleaned dataset
+    6. Save clean dataset into a CSV file
 
-    Parameters
-    ----------
+    Arguments:
     output_path : str
-        Destination CSV file.
-
-    Returns
-    -------
-    DataFrame
-        Final cleaned DataFrame ready for analysis.
+        Name to save the cleaned CSV.
+    period : str
+        Time span of historical data (defined allowed periods supported by yfinance).
+    
     """
+
+    allowed_periods = {"1d", "5d", "1mo", "3mo", "6mo",
+                       "1y", "2y", "5y", "10y", "ytd", "max"}
+
+    if period not in allowed_periods:
+        print(f"Warning: period '{period}' is not officially in yfinance defaults.")
+        print(f"Using it anyway. Valid options include: {allowed_periods}")
+
+    print("Starting FULL download pipeline...")
+
     tickers = get_sp500_tickers()
-    raw = download_prices(tickers, period="5y")
-    flat = flatten_to_csv(raw, output_path=output_path)
-    validate_prices(flat)
-    return flat
+    raw_multi = download_prices(tickers, period=period)
+    flat_raw = flatten_to_csv(raw_multi, output_path="sp500_prices_raw.csv")
+    cleaned = clean_prices(flat_raw)
+    validate_prices(cleaned)
+
+    cleaned.to_csv(output_path, index=False)
+    print(f"CLEAN dataset saved to: {output_path}")
+
+    return cleaned
+
+# to run the full pipeline when executing this script
+
+if __name__ == "__main__":
+    #run by default: 5 years period
+    full_download(period="5y")
