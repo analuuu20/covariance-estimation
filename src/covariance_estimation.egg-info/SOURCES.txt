@@ -1,0 +1,9 @@
+README.md
+setup.py
+src/covariance_estimation/__init__.py
+src/covariance_estimation/data_utils.py
+src/covariance_estimation.egg-info/PKG-INFO
+src/covariance_estimation.egg-info/SOURCES.txt
+src/covariance_estimation.egg-info/dependency_links.txt
+src/covariance_estimation.egg-info/top_level.txt
+tests/test_initial.py
