@@ -15,7 +15,7 @@ The project will be following the subject requirements, implemented in Python 3.
 
     - Data processing: the packages to be used are Pandas and request libraries to clean the prices time series and extract the data set in a csv file.
 
-    - Covariance estimation methodologies: once the database is standardized, volatility and correlations will be computed using different methodologies. A DCC-GARCH model will be used as the baseline methodology and a Ledoit–Wolf Shrinkage, Optimally-Shrunk Covariance Estimation(OAS), Principal Component Analysis (PCA) and Graphical Lasso (GLASSO) models will be executed to attempt other methodologies to estimate the variance of the sample. 
+    - Covariance estimation methodologies: once the database is standardized, volatility and correlations will be computed using different methodologies. A DCC-GARCH model will be used as the baseline methodology and a Ledoit–Wolf Shrinkage, Optimally-Shrunk Covariance Estimation (OAS), Principal Component Analysis (PCA) and Graphical Lasso (GLASSO) models will be executed to attempt other methodologies to estimate the variance of the sample. 
 
     - Result comparison: the covariance matrices obtained will be compared one to another by making out-of-sample testing with rolling windows to determine the error between the model estimation and the historical outcome to define the best-performing methodology.
 
