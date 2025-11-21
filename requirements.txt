@@ -11,4 +11,6 @@ scikit-learn
 yfinance
 requests
 lxml
+joblib
+seaborn
 
