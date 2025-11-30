@@ -11,8 +11,8 @@ The data pipeline follows these steps:
 5. Validate the resulting dataset using basic quality checks.
 6. Save the cleaned dataset into CSV format for further analysis.
 
-This script is intended to provide a reproducible and academically rigorous data ingestion workflow
-for covariance estimation or other financial econometrics applications.
+This script provides a reproducible and academically rigorous data ingestion workflow
+for covariance estimation and other financial econometrics applications.
 """
 
 import pandas as pd
@@ -26,26 +26,23 @@ import requests
 
 def get_sp500_tickers():
     """
-    Extract S&P 500 tickers from Wikipedia using a robust HTTP request and
-    robust table selection (to avoid issues caused by structural changes
-    in the Wikipedia HTML formatting).
+    Extract the S&P 500 constituent list directly from Wikipedia.
 
-    The function:
-    - Sends an HTTP request with a custom User-Agent (avoids 403 Forbidden errors).
-    - Parses all HTML tables found in the page.
-    - Selects the table containing the 'Symbol' column, which identifies listed tickers.
-    - Converts tickers to a Yahoo Finance–compatible format (replacing '.' with '-').
+    This function:
+    - Uses an explicit User-Agent to avoid server-side blocking.
+    - Parses all HTML tables on the page.
+    - Selects the table that contains the 'Symbol' column.
+    - Converts tickers to Yahoo Finance format (replace '.' with '-').
 
     Returns
     -------
     list[str]
-        The list of ticker symbols of the S&P 500 constituents.
+        Clean list of S&P 500 ticker symbols.
     """
 
     from io import StringIO
     url = "https://en.wikipedia.org/wiki/List_of_S%26P_500_companies"
 
-    # Use a realistic user-agent string to prevent server rejection
     headers = {
         "User-Agent": (
             "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -57,10 +54,8 @@ def get_sp500_tickers():
     if response.status_code != 200:
         raise ValueError(f"Failed to fetch S&P 500 list. Status code: {response.status_code}")
 
-    # Wrap HTML content in a buffer to avoid FutureWarnings
     dfs = pd.read_html(StringIO(response.text))
 
-    # Select the correct table by column inspection
     table = None
     for df in dfs:
         if "Symbol" in df.columns:
@@ -68,41 +63,52 @@ def get_sp500_tickers():
             break
 
     if table is None:
-        raise ValueError("Could not find S&P 500 table with 'Symbol' column.")
+        raise ValueError("Could not find S&P 500 table containing the 'Symbol' column.")
 
-    tickers = table["Symbol"].tolist()
-    tickers = [t.replace(".", "-") for t in tickers]  # Required for Yahoo Finance API
+    tickers = [t.replace(".", "-") for t in table["Symbol"].tolist()]
+
+    print("\n[INFO] Total S&P 500 tickers retrieved:", len(tickers))
+    print("[INFO] Tickers used:\n", tickers)
 
     return tickers
 
 
 
 # =====================================================================
-# 2. Download price data using yfinance
+# 2. Download price data using yfinance (with explicit date range)
 # =====================================================================
 
-def download_prices(tickers, period="5y"):
+def download_prices(tickers, start_date, end_date):
     """
-    Download historical OHLCV price data for the given list of tickers.
+    Download OHLCV price data for all tickers within the specified date range.
 
     Parameters
     ----------
     tickers : list[str]
         List of ticker symbols.
-    period : str
-        Time span for which historical data should be downloaded.
-        Follows the official yfinance API format (e.g., '1y', '5y', 'max').
+    start_date : str
+        Start date in 'YYYY-MM-DD' format.
+    end_date : str
+        End date in 'YYYY-MM-DD' format.
 
     Returns
     -------
     DataFrame
-        MultiIndex DataFrame with levels:
-        - Date (index)
-        - Variable name (Open, High, Low, Close, Adj Close, Volume)
-        - Ticker symbol
+        MultiIndex DataFrame with (Variable, Ticker) columns.
     """
-    print(f"Downloading data for {len(tickers)} tickers over period = '{period}'...")
-    df = yf.download(tickers, period=period, group_by="ticker", auto_adjust=False)
+
+    print(f"\n[DOWNLOAD] Downloading data for {len(tickers)} tickers")
+    print(f"           From: {start_date}  To: {end_date}")
+
+    df = yf.download(
+        tickers,
+        start=start_date,
+        end=end_date,
+        group_by="ticker",
+        auto_adjust=False
+    )
+
+    print("[DOWNLOAD] Completed download.\n")
     return df
 
 
@@ -113,20 +119,18 @@ def download_prices(tickers, period="5y"):
 
 def flatten_to_csv(df, output_path="data/sp500_prices_raw.csv"):
     """
-    Transform the MultiIndex DataFrame produced by yfinance into a
-    single flat table with columns:
+    Convert the MultiIndex DataFrame from yfinance into a flat structure,
+    with columns:
 
-    Date, Open, High, Low, Close, Adj Close, Volume, Ticker
-
-    Flattening is necessary because most downstream econometric routines
-    expect a tabular dataset rather than a hierarchical structure.
+        Date, Open, High, Low, Close, Adj Close, Volume, Ticker
 
     Returns
     -------
     DataFrame
-        The flattened dataset.
+        Flattened price dataset.
     """
-    print("Flattening data...")
+
+    print("[FLATTEN] Transforming MultiIndex dataset into tabular format...")
 
     clean_rows = []
     for ticker in df.columns.levels[0]:
@@ -135,80 +139,58 @@ def flatten_to_csv(df, output_path="data/sp500_prices_raw.csv"):
         clean_rows.append(sub)
 
     flat = pd.concat(clean_rows)
-    flat = flat.reset_index()  # Ensure Date is a column rather than an index
+    flat = flat.reset_index()
 
     flat.to_csv(output_path, index=False)
-    print(f"Saved RAW flattened dataset to {output_path}")
+    print(f"[FLATTEN] Saved RAW flattened dataset → {output_path}")
 
     return flat
 
 
 
 # =====================================================================
-# 4. Cleaning routine: handle invalid data, duplicates, and types
+# 4. Cleaning routine
 # =====================================================================
 
 def clean_prices(df):
     """
-    Apply a set of cleaning steps to the flattened dataset.
+    Applies standard data cleaning procedures commonly used in empirical finance.
 
-    Cleaning operations include:
-    - Parsing and validating dates.
-    - Ensuring numeric price fields (non-numeric values become NaN and are removed).
-    - Removing rows with missing critical variables.
-    - Removing duplicated rows.
-    - Excluding entries with invalid prices (e.g., zero close price).
-    - Sorting the dataset for consistency and reproducibility.
-
-    This step is essential for obtaining a well-behaved dataset suitable for:
-    - Covariance matrix estimation
-    - Factor model regression
-    - Portfolio optimization
+    These include:
+    - Date parsing
+    - Enforcing numeric types
+    - Removing missing values and duplicates
+    - Filtering out invalid price entries
+    - Sorting the dataset
     """
-    print("Cleaning dataset...")
 
-    # Convert date column to datetime format
+    print("[CLEAN] Cleaning dataset...")
+
     df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
 
-    # Enforce numeric columns
     numeric_cols = ["Open", "High", "Low", "Close", "Adj Close", "Volume"]
     for col in numeric_cols:
         df[col] = pd.to_numeric(df[col], errors="coerce")
 
-    # Drop observations missing essential information
     df = df.dropna(subset=["Date", "Open", "High", "Low", "Close", "Volume", "Ticker"])
-
-    # Remove duplicated rows
     df = df.drop_duplicates()
-
-    # Exclude logically invalid entries (e.g., zero closing price)
     df = df[df["Close"] > 0]
-
-    # Sort for consistent ordering
     df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
 
-    print("Cleaning complete")
+    print("[CLEAN] Cleaning complete.\n")
     return df
 
 
 
 # =====================================================================
-# 5. Data validation and quality summary
+# 5. Validation summary
 # =====================================================================
 
 def validate_prices(df):
     """
-    Produce a basic diagnostic summary of the cleaned dataset.
-
-    This function does not modify the data; instead, it verifies key properties:
-    - Total number of observations
-    - Number of unique tickers
-    - Remaining missing values
-    - Number of duplicated rows
-
-    Such diagnostics are standard in empirical finance to ensure
-    the dataset is appropriate for econometric analysis.
+    Generates a diagnostic summary for data validation.
     """
+
     summary = {
         "n_rows": len(df),
         "n_tickers": df["Ticker"].nunique(),
@@ -216,7 +198,7 @@ def validate_prices(df):
         "duplicates": df.duplicated().sum(),
     }
 
-    print("Validation summary:")
+    print("[VALIDATION] Dataset statistics:")
     for k, v in summary.items():
         print(f" - {k}: {v}")
 
@@ -225,55 +207,38 @@ def validate_prices(df):
 
 
 # =====================================================================
-# 6. Convenience wrapper: full pipeline execution
+# 6. Full pipeline wrapper
 # =====================================================================
 
-def full_download(output_path="data/sp500_prices_clean.csv", period="5y"):
+def full_download(output_path="data/sp500_prices_clean.csv"):
     """
-    Execute the full data ingestion pipeline:
-
-    1. Retrieve S&P 500 constituent tickers.
-    2. Download historical price data from Yahoo Finance.
-    3. Flatten the MultiIndex structure.
-    4. Clean the resulting dataset.
-    5. Validate data integrity.
-    6. Save cleaned data to CSV.
-
-    Parameters
-    ----------
-    output_path : str
-        Destination path for the cleaned dataset.
-    period : str
-        Historical horizon for price retrieval.
+    Full data ingestion workflow with fixed date range:
+    15 Nov 2020 → 14 Nov 2025
     """
 
-    # Official valid periods as defined by yfinance API
-    allowed_periods = {
-        "1d", "5d", "1mo", "3mo", "6mo",
-        "1y", "2y", "5y", "10y", "ytd", "max"
-    }
+    start = "2020-11-15"
+    end   = "2025-11-14"
 
-    if period not in allowed_periods:
-        print(f"Warning: period '{period}' is not officially in yfinance defaults.")
-        print(f"Valid options include: {allowed_periods}")
-
-    print("Starting FULL download pipeline...")
+    print("\n========== FULL DATA INGESTION PIPELINE ==========\n")
+    print(f"[INFO] Using fixed date range: {start} → {end}")
 
     tickers = get_sp500_tickers()
-    raw_multi = download_prices(tickers, period=period)
-    flat_raw = flatten_to_csv(raw_multi, output_path="sp500_prices_raw.csv")
+    raw_multi = download_prices(tickers, start, end)
+    flat_raw = flatten_to_csv(raw_multi, output_path="data/sp500_prices_raw.csv")
     cleaned = clean_prices(flat_raw)
     validate_prices(cleaned)
 
     cleaned.to_csv(output_path, index=False)
-    print(f"CLEAN dataset saved to: {output_path}")
+    print(f"\n[SAVE] CLEAN dataset saved to: {output_path}")
 
+    print("\n========== PIPELINE COMPLETED SUCCESSFULLY ==========\n")
     return cleaned
+
+
 
 # =====================================================================
 # 7. Script entry point
 # =====================================================================
 
 if __name__ == "__main__":
-    # Default execution: download 5 years of data
-    full_download(period="5y")
+    full_download()

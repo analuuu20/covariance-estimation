@@ -1,29 +1,19 @@
 """
-dcc_manual.py
+dcc_training_only.py
 
-Manual implementation of DCC-GARCH(1,1) estimator with MLE calibration
-(Engle, 2002). This script performs the following steps:
+Manual implementation of the two-step DCC-GARCH(1,1) estimator with MLE calibration 
+(Engle, 2002). This script is dedicated solely to training the dynamic baseline model
+and saving its parameters for subsequent out-of-sample evaluation.
 
-1) Load training returns from /data/train_returns.csv (must contain columns: Date, Ticker, LogReturn).
-2) Select a reproducible random subset of 30 tickers (random_state=42).
-3) Create a synchronized wide matrix (T x N) by pivoting and dropping rows with missing values.
-4) Fit univariate GARCH(1,1) for each selected ticker using `arch.univariate` (ConstantMean + GARCH).
-   - Extract conditional volatilities σ_{i,t} and standardized residuals ε_{i,t}.
-5) Define the DCC(1,1) recursion:
-       Q_t = (1 - a - b) Q̄ + a ε_{t-1} ε'_{t-1} + b Q_{t-1},
-   convert to correlations R_t and evaluate the Gaussian log-likelihood:
-       L(a,b) = 0.5 * sum_t [ ln |R_t| + ε_t' R_t^{-1} ε_t ]  (+ const)
-   We maximize the likelihood (equivalently minimize negative log-likelihood).
-6) Calibrate (a,b) via constrained numerical optimization (L-BFGS-B with constraints enforced via penalty).
-7) Construct the final covariance matrix Σ_T = D_T R_T D_T where D_T = diag(σ_{i,T}).
-8) Save model outputs (pickle + CSV) in /tests and print a table of estimated parameters.
+Workflow:
+1. Load and prepare a reproducible subset of returns (N=30 tickers).
+2. Fit N univariate GARCH(1,1) models (to get conditional volatilities and standardized residuals).
+3. Calibrate the DCC parameters (a, b) via constrained numerical optimization (MLE).
+4. Save the estimated DCC parameters and the full time series of GARCH conditional volatilities.
 
 Notes:
-- We purposely use only 30 tickers (seeded selection) for tractability of DCC estimation.
-- The univariate GARCH step is independent across tickers (two-step estimation is standard:
-  first fit marginal volatilities, then fit the correlation dynamics).
-- The implementation includes numerical stabilizers (small jitter) to ensure positive-definiteness
-  and robust inversion when computing likelihoods.
+- Numerical stabilization (rescaling) is applied to returns to improve MLE convergence.
+- The output is the full time-series of GARCH sigmas and the DCC parameters (a, b).
 """
 
 from __future__ import annotations
@@ -35,23 +25,24 @@ from typing import Tuple, Dict, Any, List
 import numpy as np
 import pandas as pd
 from scipy.optimize import minimize
-from joblib import dump
 from arch.univariate import ConstantMean, GARCH, Normal
+import matplotlib.pyplot as plt
+import seaborn as sns
 
 # ---------------------------
 # Config / hyperparameters
 # ---------------------------
-TRAIN_PATH = "data/train_returns.csv"   # input panel
-OUT_DIR = "tests"                        # outputs (pickles and cov csv)
-N_TICKERS = 30                           # subset for DCC baseline
-RANDOM_STATE = 42                        # reproducibility seed for ticker selection
-EPS_STABILITY = 1e-6                     # small jitter for PD-ness
-GARCH_PRINT_INTERVAL = 5                 # print progress every k assets
-
+TRAIN_PATH = "data/train_returns.csv"   # Input panel (log-returns)
+OUT_DIR = "tests"                       # Outputs directory
+N_TICKERS = 30                          # Subset size for DCC tractability
+RANDOM_STATE = 42                       # Reproducibility seed for ticker selection
+EPS_STABILITY = 1e-6                    # Small jitter for positive definiteness (PD)
+GARCH_PRINT_INTERVAL = 5                # Print progress every k assets
+SCALING_FACTOR = 100                    # Numerical stabilization factor (rescales returns)
 
 
 # ---------------------------
-# Utility functions
+# Utility functions (Simplified for DCC only)
 # ---------------------------
 
 def ensure_outdir(outdir: str = OUT_DIR):
@@ -59,27 +50,21 @@ def ensure_outdir(outdir: str = OUT_DIR):
 
 
 def load_panel(path: str = TRAIN_PATH) -> pd.DataFrame:
-    """
-    Load training panel and perform basic validation.
-    Expected columns: Date, Ticker, LogReturn
-    """
+    """Load training panel and return wide format."""
     print(f"[LOAD] Reading training CSV from: {path}")
     df = pd.read_csv(path, parse_dates=["Date"])
-    req = {"Date", "Ticker", "LogReturn"}
-    if not req.issubset(set(df.columns)):
-        raise ValueError(f"Input CSV must contain columns {req}. Found: {list(df.columns)}")
-    print(f"[LOAD] Panel loaded: {df['Ticker'].nunique()} unique tickers, {df['Date'].nunique()} unique dates.")
+    # [ACADEMIC NOTE]: Rescaling applied for numerical stability of MLE optimizer.
+    df['LogReturn'] *= SCALING_FACTOR
+    
+    print(f"[LOAD] Panel loaded: {df['Ticker'].nunique()} unique tickers.")
     return df
 
 
 def select_tickers(df: pd.DataFrame, n: int = N_TICKERS, seed: int = RANDOM_STATE) -> List[str]:
-    """
-    Select n tickers at random using a fixed seed for reproducibility.
-    """
+    """Select n tickers at random using a fixed seed for reproducibility."""
     np.random.seed(seed)
     unique = np.sort(df["Ticker"].unique())
     if n >= len(unique):
-        print(f"[SELECT] Requested {n} tickers but only {len(unique)} available. Using all tickers.")
         return list(unique)
     chosen = list(np.random.choice(unique, size=n, replace=False))
     print(f"[SELECT] Selected {n} tickers (seed={seed}). Example slice: {chosen[:6]}...")
@@ -87,46 +72,30 @@ def select_tickers(df: pd.DataFrame, n: int = N_TICKERS, seed: int = RANDOM_STAT
 
 
 def pivot_and_sync(df: pd.DataFrame, tickers: List[str]) -> Tuple[pd.DataFrame, np.ndarray, List[str]]:
-    """
-    Build synchronized wide returns matrix for the chosen tickers.
-    Drops dates with any NA across the chosen subset to obtain a synchronous panel.
-    Returns:
-      - wide_df: DataFrame (index=Date, columns=tickers)
-      - X: numpy array (T x N)
-      - tickers_order: list of tickers in column order
-    """
-    print("[PREP] Pivoting to wide format and synchronizing dates (dropna across subset)...")
+    """Build synchronized wide returns matrix for the chosen subset."""
+    print("[PREP] Pivoting to wide format and synchronizing dates...")
     sub = df[df["Ticker"].isin(tickers)].copy()
     wide = sub.pivot(index="Date", columns="Ticker", values="LogReturn")
-    before_dates = wide.shape[0]
-    wide = wide.loc[:, tickers]   # preserve chosen order
-    wide = wide.dropna(axis=0, how="any")
-    after_dates = wide.shape[0]
-    print(f"[PREP] Dates before sync: {before_dates}, after dropna: {after_dates}. Using {wide.shape[1]} tickers.")
-    X = wide.values  # T x N
+    wide = wide.loc[:, tickers]     
+    wide = wide.dropna(axis=0, how="any") # Drop any date with missing data across the subset
+    print(f"[PREP] Final synchronized panel dimensions: {wide.shape[0]} dates, {wide.shape[1]} tickers.")
+    X = wide.values                 
     tickers_order = list(wide.columns)
     return wide, X, tickers_order
 
 
 # ---------------------------
-# GARCH estimation (univariate)
+# GARCH estimation (univariate) - STEP 1
 # ---------------------------
 
 def fit_garch_for_series(series: pd.Series) -> Tuple[np.ndarray, np.ndarray, Dict[str, float]]:
-    """
-    Fit a ConstantMean + GARCH(1,1) model for one series using `arch`.
-    Returns:
-      - sigma: array (T,) conditional volatilities (aligned with input series index)
-      - std_resid: array (T,) standardized residuals = resid / sigma
-      - params: dict with fitted parameters (omega, alpha, beta)
-    """
-    # Create model: Constant mean + GARCH(1,1), Normal innovations
+    """Fit a ConstantMean + GARCH(1,1) model for one series."""
+    # Fit quietly
     am = ConstantMean(series)
     am.volatility = GARCH(p=1, o=0, q=1)
     am.distribution = Normal()
-
-    # Fit quietly
     res = am.fit(disp="off")
+    
     sigma = res.conditional_volatility
     resid = res.resid
     std_resid = resid / sigma
@@ -140,45 +109,37 @@ def fit_garch_for_series(series: pd.Series) -> Tuple[np.ndarray, np.ndarray, Dic
 
 
 def fit_garch_panel(wide: pd.DataFrame) -> Tuple[np.ndarray, np.ndarray, pd.DataFrame]:
-    """
-    Fit GARCH(1,1) for each column of the wide DataFrame.
-    Returns:
-      - sigmas: ndarray (T x N) conditional volatilities
-      - std_resids: ndarray (T x N) standardized residuals
-      - params_df: DataFrame with per-asset GARCH params
-    """
+    """Fit GARCH(1,1) for each column of the wide DataFrame (Parallel fitting)."""
     T, N = wide.shape
-    print(f"[GARCH] Fitting univariate GARCH(1,1) for N={N} assets over T={T} dates.")
+    print(f"\n[GARCH - STEP 1] Fitting N={N} univariate GARCH(1,1) models...")
     sigmas = np.zeros((T, N))
     std_resids = np.zeros((T, N))
     rows = []
+    
     for i, col in enumerate(wide.columns):
         if (i % GARCH_PRINT_INTERVAL) == 0:
             print(f"[GARCH] Fitting asset {i+1}/{N}: {col} ...")
+        
         s, std, params = fit_garch_for_series(wide[col])
         sigmas[:, i] = s
         std_resids[:, i] = std
         row = {"Ticker": col, **params}
         rows.append(row)
+        
     params_df = pd.DataFrame(rows)
-    print("[GARCH] Completed fitting all univariate GARCH models.")
+    print("[GARCH - STEP 1] Completed fitting all univariate GARCH models.")
     return sigmas, std_resids, params_df
 
 
 # ---------------------------
-# DCC likelihood and estimation
+# DCC likelihood and estimation - STEP 2
 # ---------------------------
 
 def ensure_pd(mat: np.ndarray, eps: float = EPS_STABILITY) -> np.ndarray:
-    """
-    Ensure matrix is positive definite by adding small jitter on diagonal if needed.
-    """
-    # Symmetrize
-    mat = 0.5 * (mat + mat.T)
-    # Add jitter until PD
+    """Ensure matrix is positive definite (PD) by adding small jitter on diagonal."""
+    mat = 0.5 * (mat + mat.T) # Symmetrize
     jitter = 0.0
     try:
-        # quick check via Cholesky
         np.linalg.cholesky(mat)
         return mat
     except np.linalg.LinAlgError:
@@ -191,208 +152,234 @@ def ensure_pd(mat: np.ndarray, eps: float = EPS_STABILITY) -> np.ndarray:
                 return mat_j
             except np.linalg.LinAlgError:
                 jitter *= 10
-        # if still not PD, raise
         raise np.linalg.LinAlgError("Matrix not positive-definite even after jitter.")
 
 
 def dcc_neg_loglik(params: np.ndarray, eps: np.ndarray) -> float:
-    """
-    Negative log-likelihood for DCC(1,1) based on standardized residuals eps (T x N).
-
-    We use the Gaussian conditional log-likelihood (up to additive constants):
-      L = 0.5 * sum_t [ ln |R_t| + eps_t' R_t^{-1} eps_t ].
-
-    To enforce stationarity constraint a>=0,b>=0,a+b<1 we return a large penalty
-    when constraints are violated.
-    """
+    """Negative log-likelihood for DCC(1,1) based on standardized residuals."""
     a, b = params
-    # constraints: a >= 0, b >= 0, a + b < 1
-    if a < 0 or b < 0 or (a + b) >= 0.999999:
+    # Constraints check (stationarity constraint: a>=0, b>=0, a+b<1)
+    if a < 0 or b < 0 or (a + b) >= 0.999:
         return 1e12
 
     T, N = eps.shape
-    S = np.cov(eps, rowvar=False)  # unconditional covariance of standardized resid
+    S = np.cov(eps, rowvar=False)  # Unconditional covariance of standardized resid
     Q = S.copy()
     nll = 0.0
 
-    # iterate time to build Q_t and compute correlation R_t
+    # Main DCC recursion loop
     for t in range(T):
-        # update Q: note here eps[t] is 1D array of length N
-        e = eps[t][:, None]   # column vector
-        Q = (1.0 - a - b) * S + a * (e @ e.T) + b * Q
-
-        # form correlation R_t from Q (R_t = diag(Q)^{-1/2} Q diag(Q)^{-1/2})
+        e = eps[t][:, None]
+        Q = (1.0 - a - b) * S + a * (e @ e.T) + b * Q # Q_t update
+        
+        # Form correlation R_t
         diagQ = np.sqrt(np.diag(Q))
-        # if any diagQ is zero, add tiny jitter
-        if np.any(diagQ <= 0):
-            diagQ = np.where(diagQ <= 0, EPS_STABILITY, diagQ)
+        diagQ = np.where(diagQ <= 0, EPS_STABILITY, diagQ)
         Dinv = np.diag(1.0 / diagQ)
         R = Dinv @ Q @ Dinv
-
-        # numerical stabilization
+        
         try:
             R = ensure_pd(R)
         except np.linalg.LinAlgError:
-            # heavy penalty if non-PD
-            return 1e12
+            return 1e12 # Heavy penalty
 
-        # compute logdet and quadratic form
+        # Compute log-likelihood contribution
         sign, logdet = np.linalg.slogdet(R)
         if sign <= 0:
-            return 1e12
+            return 1e12 # Heavy penalty
         invR = np.linalg.inv(R)
         quad = float(eps[t].T @ invR @ eps[t])
         nll += 0.5 * (logdet + quad)
 
-    return nll  # minimized by optimizer
+    return nll
 
 
 def estimate_dcc_params_mle(std_resids: np.ndarray, init: Tuple[float, float] = (0.01, 0.97)) -> Tuple[float, float, Dict[str, Any]]:
-    """
-    Estimate (a,b) by minimizing the negative log-likelihood.
-    Returns estimated (a_hat, b_hat) and optimization metadata.
-    """
-    print("[DCC-MLE] Beginning MLE for (a,b) with initial guess:", init)
-
+    """Estimate (a,b) by minimizing the negative log-likelihood (MLE)."""
+    print("\n[DCC - STEP 2] Beginning MLE for (a,b) correlation parameters...")
+    
     def callback(xk):
-        # callback called every iteration; print progress
-        print(f"[DCC-MLE] iter params: a={xk[0]:.6f}, b={xk[1]:.6f}")
+        # Progress print during optimization
+        print(f"[DCC-MLE] Iteration update: a={xk[0]:.6f}, b={xk[1]:.6f}")
 
-    # bounds to keep parameters in [1e-6, 0.999]
-    bounds = [(1e-8, 0.9999), (1e-8, 0.9999)]
+    # Bounds: a and b must be non-negative and sum to less than 1
+    bounds = [(1e-8, 0.9999), (1e-8, 0.9999)] 
     res = minimize(lambda p: dcc_neg_loglik(p, std_resids),
                    x0=np.array(init),
                    method="L-BFGS-B",
                    bounds=bounds,
                    callback=callback,
-                   options={"disp": False, "maxiter": 200})
-    if not res.success:
-        print("[DCC-MLE] WARNING: optimizer did not converge:", res.message)
+                   options={"disp": False, "maxiter": 500})
+    
     a_hat, b_hat = float(res.x[0]), float(res.x[1])
-    print(f"[DCC-MLE] Finished. Estimated: a={a_hat:.6f}, b={b_hat:.6f}. Optimizer message: {res.message}")
+    
+    if not res.success:
+        print(f"[DCC-MLE] WARNING: Optimizer failed to converge: {res.message}")
+    
+    print(f"\n[DCC-MLE] Finished. Estimated: a={a_hat:.6f}, b={b_hat:.6f}. Log-Likelihood: {-res.fun:.2f}")
     metadata = {"opt_success": res.success, "opt_message": res.message, "fun": float(res.fun), "nit": res.nit}
     return a_hat, b_hat, metadata
 
 
 # ---------------------------
-# Reconstruct final covariance and save
+# Reconstruction and Save
 # ---------------------------
 
-def build_final_covariance(std_resids: np.ndarray, sigmas: np.ndarray, a: float, b: float) -> np.ndarray:
-    """
-    Compute final (time-averaged or last-period) DCC covariance:
-      - run the DCC recursion to produce Q_T and hence R_T
-      - use last conditional sigmas to form Σ_T = D_T R_T D_T
-    Here we return Σ_T (N x N).
-    """
+def compute_dcc_time_series(std_resids: np.ndarray,
+                            sigmas: np.ndarray,
+                            a: float,
+                            b: float) -> Tuple[np.ndarray, np.ndarray]:
+    """Compute the full time series of DCC covariances Σ_t and correlations R_t."""
     T, N = std_resids.shape
     S = np.cov(std_resids, rowvar=False)
     Q = S.copy()
-    # run recursion up to T
+
+    Sigma_ts = np.zeros((T, N, N))
+    R_ts = np.zeros((T, N, N))
+
     for t in range(T):
         e = std_resids[t][:, None]
         Q = (1.0 - a - b) * S + a * (e @ e.T) + b * Q
+        
+        diagQ = np.sqrt(np.diag(Q))
+        diagQ = np.where(diagQ <= 0, EPS_STABILITY, diagQ)
+        Dinv = np.diag(1.0 / diagQ)
+        R_t = Dinv @ Q @ Dinv                  
+        R_ts[t] = ensure_pd(R_t)
 
-    # correlation
-    diagQ = np.sqrt(np.diag(Q))
-    diagQ = np.where(diagQ <= 0, EPS_STABILITY, diagQ)
-    Dinv = np.diag(1.0 / diagQ)
-    R_T = Dinv @ Q @ Dinv
-    R_T = ensure_pd(R_T)
+        D_t = np.diag(sigmas[t])
+        Sigma_ts[t] = ensure_pd(D_t @ R_t @ D_t)
 
-    # last conditional sigmas: use the last row of sigmas
-    last_sigmas = sigmas[-1]
-    D_last = np.diag(last_sigmas)
-    Sigma_T = D_last @ R_T @ D_last
-    Sigma_T = ensure_pd(Sigma_T)
-    return Sigma_T, R_T
+    return Sigma_ts, R_ts
+
+
+def save_dcc_results(model_obj: Dict[str, Any], outdir: str, SCALING_FACTOR: int, tickers_order: List[str]):
+    """Saves the final DCC object and summary files."""    
+    
+    Sigma_T_scaled = model_obj['Sigma_ts'][-1]
+    
+    # 1. Descale the final covariance matrix (Sigma_T) for absolute interpretation
+    Sigma_T = Sigma_T_scaled / (SCALING_FACTOR ** 2)
+    
+    # Update object with descaled matrices
+    model_obj['Sigma_T_descaled'] = Sigma_T
+    model_obj['Sigma_ts_descaled'] = model_obj['Sigma_ts'] / (SCALING_FACTOR ** 2)
+    
+    # 2. Save full model object (PICKLE)
+    pickle_path = os.path.join(outdir, "dcc_garch_model.pkl")
+    with open(pickle_path, "wb") as f:
+        pickle.dump(model_obj, f)
+    print(f"\n[SAVE SUCCESS] Pickled DCC model object to: {pickle_path}")
+
+    # 3. Save final covariance matrix (CSV)
+    cov_df = pd.DataFrame(Sigma_T, index=tickers_order, columns=tickers_order)
+    cov_csv = os.path.join(outdir, "dcc_garch_covariance_final.csv")
+    cov_df.to_csv(cov_csv)
+    print(f"[SAVE SUCCESS] Saved descaled covariance matrix CSV to: {cov_csv}")
 
 
 # ---------------------------
-# Top-level pipeline
+# Top-level DCC training pipeline
 # ---------------------------
 
 def train_dcc_pipeline(train_csv: str = TRAIN_PATH,
                        outdir: str = OUT_DIR,
                        n_tickers: int = N_TICKERS,
                        seed: int = RANDOM_STATE) -> Dict[str, Any]:
-    """
-    Run the full DCC-GARCH training pipeline:
-     - load panel
-     - select tickers
-     - pivot & sync
-     - fit GARCH univariates
-     - estimate DCC (a,b) by MLE
-     - build final covariance Σ_T
-     - save pickle + covariance CSV + params table
-    Returns a dictionary with metadata and filepaths.
-    """
+    
     ensure_outdir(outdir)
+    
+    # 1. Data Prep and Subset Selection
     df = load_panel(train_csv)
-    chosen = select_tickers(df, n=n_tickers, seed=seed)
-    wide, X, tickers_order = pivot_and_sync(df, chosen)
+    chosen_tickers = select_tickers(df, n=n_tickers, seed=seed)
+    wide, X, tickers_order = pivot_and_sync(df, chosen_tickers)
 
-    # Fit univariate GARCH on the synchronized wide panel (T x N)
+    # 2. Fit Univariate GARCH models (Conditional Volatilities)
     sigmas, std_resids, params_df = fit_garch_panel(wide)
 
-    # Some standardized residuals may contain nan due to numerical issues; ensure finite
+    # Handle numerical issues (from original code)
     if not np.isfinite(std_resids).all():
-        print("[WARN] Found non-finite standardized residuals; replacing inf/NaN with zeros (conservative).")
+        warnings.warn("Found non-finite standardized residuals; replacing with zeros (conservative).")
         std_resids = np.nan_to_num(std_resids, nan=0.0, posinf=0.0, neginf=0.0)
 
-    # Estimate DCC parameters by MLE
-    a_hat, b_hat, opt_meta = estimate_dcc_params_mle(std_resids, init=(0.01, 0.97))
+    # 3. Estimate DCC Parameters (MLE)
+    a_hat, b_hat, opt_meta = estimate_dcc_params_mle(std_resids, init=(0.05, 0.90))
 
-    # Build final covariance (Σ_T) and correlation R_T
-    Sigma_T, R_T = build_final_covariance(std_resids, sigmas, a_hat, b_hat)
+    # 4. Compute Full Time Series of Covariance Matrices
+    Sigma_ts, R_ts = compute_dcc_time_series(std_resids, sigmas, a_hat, b_hat)
 
-    # Save results to outdir
-    ensure_outdir(outdir)
-    meta = {
+    # 5. Build Final Model Object
+    model_obj = {
+        "DCC_a": a_hat,
+        "DCC_b": b_hat,
         "tickers": tickers_order,
-        "a": a_hat,
-        "b": b_hat,
+        "garch_params": params_df,
+        "Sigma_ts": Sigma_ts,
+        "R_ts": R_ts,
         "opt_meta": opt_meta
     }
+    
+    # 6. Save Descaled Results and Object
+    save_dcc_results(model_obj, outdir, SCALING_FACTOR, tickers_order)
 
-    # Save pickle of metadata and arrays (avoid ultra-large objects)
-    model_obj = {"meta": meta, "Sigma_T": Sigma_T, "R_T": R_T, "garch_params": params_df}
-    pickle_path = os.path.join(outdir, "dcc_garch_model.pkl")
-    with open(pickle_path, "wb") as f:
-        pickle.dump(model_obj, f)
-    print(f"[SAVE] Pickled model metadata to: {pickle_path}")
+    # ------------------------------------------------
+    # 7. CALCULAR LOG-LIKELIHOOD DESESCALADO
+    # ------------------------------------------------
+    
+    # [ACADEMIC ADJUSTMENT] Descale the Log-Likelihood (LLF) for absolute interpretation.
+    # LLF_original = LLF_scaled - (T * N * ln(c))
+    
+    # Parámetros del ajuste
+    T_obs = X.shape[0]                  # 712
+    N_assets = len(tickers_order)       # 30
+    log_c = np.log(SCALING_FACTOR)      # ln(100) approx 4.605
+    
+    # Valor de LLF negativo obtenido de la optimización (el valor 'fun' es la NLLF)
+    nll_scaled = opt_meta.get("fun", 0.0) 
+    
+    # Calcular el Log-Likelihood (positivo) escalado
+    llf_scaled = -nll_scaled 
+    
+    # Calcular el factor de ajuste total
+    adjustment_factor = T_obs * N_assets * log_c
+    
+    # Calcular el Log-Likelihood desescalado
+    llf_descaled = llf_scaled - adjustment_factor
+    
+    print(f"\n[INFO] Descaling Log-Likelihood: {llf_scaled:.2f} (Scaled) -> {llf_descaled:.2f} (Absolute)")
 
-    # Save covariance CSV with tickers as columns/rows
-    cov_df = pd.DataFrame(Sigma_T, index=tickers_order, columns=tickers_order)
-    cov_csv = os.path.join(outdir, "dcc_garch_covariance.csv")
-    cov_df.to_csv(cov_csv)
-    print(f"[SAVE] Saved DCC covariance matrix CSV to: {cov_csv}")
-
-    # Save garch params for each asset (csv)
-    garch_params_csv = os.path.join(outdir, "dcc_univariate_garch_params.csv")
-    params_df.to_csv(garch_params_csv, index=False)
-    print(f"[SAVE] Saved univariate GARCH parameters to: {garch_params_csv}")
-
-    # Print final summary table
+    # 8. Generate Summary Output
     summary = pd.DataFrame([
         {"Parameter": "DCC_a", "Value": a_hat},
         {"Parameter": "DCC_b", "Value": b_hat},
         {"Parameter": "n_tickers", "Value": len(tickers_order)},
         {"Parameter": "T_obs", "Value": X.shape[0]},
-        {"Parameter": "opt_success", "Value": opt_meta.get("opt_success", False)},
+        {"Parameter": "Log-Likelihood (Descaled)", "Value": llf_descaled},
+        {"Parameter": "Log-Likelihood (Scaled)", "Value": llf_scaled}, # Mantener el valor escalado para referencia
+        {"Parameter": "opt_success", "Value": opt_meta.get("opt_success", False)}, 
         {"Parameter": "opt_message", "Value": opt_meta.get("opt_message", "")}
     ])
-    print("\n[DCC SUMMARY TABLE]")
+    
+    print("\n[DCC SUMMARY TABLE (CALIBRATION)]")
     print(summary.to_string(index=False))
 
-    return {"meta": meta, "pickle": pickle_path, "cov_csv": cov_csv, "garch_params_csv": garch_params_csv}
+    return model_obj
 
 
 # ---------------------------
-# If executed as script
+# Top-level execution
 # ---------------------------
 if __name__ == "__main__":
-    # Run the pipeline and capture outputs
-    results = train_dcc_pipeline()
-    print("\n[DONE] DCC-GARCH training pipeline finished. Results stored in 'tests/'.")
+    
+    print("\n=======================================================")
+    print("STARTING DCC-GARCH TRAINING PIPELINE (MANUAL MLE)")
+    print("=======================================================")
+    
+    # The pipeline is now fully self-contained, including rescaling and saving descaled results.
+    dcc_results = train_dcc_pipeline()
+    
+    print("\n[DONE] DCC-GARCH training finished. Model object and matrices saved to 'tests/'.")
 
+
+
+ 

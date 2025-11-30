@@ -1,10 +1,12 @@
 README.md
 setup.py
+src/covariance_estimation/01_data_download.py
+src/covariance_estimation/02_data_split.py
+src/covariance_estimation/03_returns_calculation.py
+src/covariance_estimation/04_dcc_garch_training.py
+src/covariance_estimation/06_model_validation.py
 src/covariance_estimation/__init__.py
-src/covariance_estimation/data_download.py
-src/covariance_estimation/data_split.py
-src/covariance_estimation/returns_calculation.py
-src/covariance_estimation/train.py
+src/covariance_estimation/garch_2.py
 src/covariance_estimation/training_models.py
 src/covariance_estimation.egg-info/PKG-INFO
 src/covariance_estimation.egg-info/SOURCES.txt

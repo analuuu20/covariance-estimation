@@ -1,418 +1,391 @@
 """
-covariance_training.py
+classical_estimators.py
 
-Training / calibration module for covariance estimators (TRAINING-STAGE ONLY).
+Classical covariance estimators pipeline (pairwise-complete covariance + PSD correction).
 
-- Input: data/train_returns.csv (panel with columns: Date, Ticker, LogReturn)
-- Output:
-    - pickles for trained models (tests/models/)
-    - CSVs of covariance matrices (tests/covariances/)
-    - plots (results/plots/)
-    - summary table with calibration & diagnostics (results/covariance_training_summary.csv)
+This module:
+  - loads the training returns CSV (data/train_returns.csv)
+  - computes pairwise-complete covariances (use only observations where both assets exist)
+  - projects the pairwise covariance matrix to the nearest PSD matrix (numerically stable)
+  - fits classical covariance estimators:
+      * Raw sample covariance (pairwise)
+      * Ledoit-Wolf shrinkage
+      * Oracle Approximating Shrinkage (OAS)
+      * PCA-based covariance (reconstruct with k components to reach 90% explained variance)
+      * Graphical Lasso tuned with GraphicalLassoCV (gamma selection via cross-validation)
+  - prints intermediate progress messages (so you can follow execution)
+  - generates publication-ready plots and a summary table with key parameters
+  - saves outputs under tests/ and tests/plots/
 
-This version attempts to use mgarch or mvgarch for a DCC-GARCH baseline.
-If neither library is installed, the script falls back to using the
-sample covariance as the DCC baseline but still trains the other estimators.
+Academic notes (short):
+  - Pairwise-complete covariance is standard in finance for panels with missing data:
+    covariance_{i,j} is computed using dates where both series i and j are observed.
+  - Ledoit–Wolf and OAS provide shrinkage estimators that reduce estimation error
+    in high-dimensional covariance estimation (Ledoit & Wolf, 2004; Chen et al., 2010).
+  - PCA approximates covariance by low-rank factor structure (economically: common factors).
+  - Graphical Lasso estimates a sparse precision matrix (conditional independence graph).
 
-Academic notes:
-- DCC-GARCH is estimated on a seeded random subset of 30 tickers to balance
-  representativeness and computational feasibility.
-- Other estimators (Ledoit-Wolf, OAS, PCA, GLASSO) operate on the full cleaned training set.
+Requirements:
+  pip install pandas numpy scikit-learn matplotlib seaborn joblib
+
+Author: (you)
+Date: (project)
 """
 
 from __future__ import annotations
 import os
-import warnings
-import joblib
 import pickle
-from typing import List, Dict, Any, Optional, Tuple
+from typing import Any, Dict, List, Tuple
 
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 import seaborn as sns
 
-from sklearn.covariance import LedoitWolf, OAS, GraphicalLasso
+from sklearn.covariance import LedoitWolf, OAS, GraphicalLassoCV, GraphicalLasso
 from sklearn.decomposition import PCA
+from sklearn.preprocessing import StandardScaler
+from joblib import dump
 
-sns.set_style("whitegrid")
-plt.rcParams.update({"figure.dpi": 150, "font.size": 11})
+# Visual style (publication-friendly)
+sns.set_theme(style="white", context="notebook", font_scale=1.05)
 
-
-# Try to import multivariate GARCH libraries that implement DCC/GARCH.
-# We try a couple of known names; availability depends on your environment.
-DCC_LIB = None
-DCC_LIB_NAME = None
-try:
-    import mvgarch  # if installed
-    DCC_LIB = mvgarch
-    DCC_LIB_NAME = "mvgarch"
-except Exception:
-    try:
-        import mgarch  # if installed
-        DCC_LIB = mgarch
-        DCC_LIB_NAME = "mgarch"
-    except Exception:
-        DCC_LIB = None
-        DCC_LIB_NAME = None
-
-if DCC_LIB_NAME:
-    print(f"[INFO] Multivariate-GARCH library available: {DCC_LIB_NAME}")
-else:
-    warnings.warn("[WARN] No multivariate GARCH library found (mvgarch/mgarch not installed). DCC baseline will be fallback (sample covariance).")
+# Paths
+TRAIN_PATH = "data/train_returns.csv"
+OUT_DIR = "tests"
+PLOTS_DIR = os.path.join(OUT_DIR, "plots")
+os.makedirs(OUT_DIR, exist_ok=True)
+os.makedirs(PLOTS_DIR, exist_ok=True)
 
 
-# ---------------------------
-# Helper I/O & plotting
-# ---------------------------
-
-def ensure_dirs():
-    os.makedirs("tests/models", exist_ok=True)
-    os.makedirs("tests/covariances", exist_ok=True)
-    os.makedirs("results/plots", exist_ok=True)
-    os.makedirs("results", exist_ok=True)
-
-
-def load_training_returns(path: str = "data/train_returns.csv") -> pd.DataFrame:
+# -------------------------
+# Utilities
+# -------------------------
+def load_training_wide(train_csv: str = TRAIN_PATH) -> Tuple[pd.DataFrame, List[str]]:
     """
-    Load the training returns panel and validate expected columns.
+    Load training returns CSV and pivot to wide panel (Date x Ticker).
+    We DO NOT drop rows across all tickers; missing values are preserved.
+    Returns:
+        wide: DataFrame indexed by Date with columns = tickers, values = LogReturn
+        tickers: list of tickers (columns order)
     """
-    print(f"[STEP] Loading training returns from: {path}")
-    df = pd.read_csv(path, parse_dates=["Date"])
-    expected = {"Date", "Ticker", "LogReturn"}
-    if not expected.issubset(set(df.columns)):
-        raise ValueError(f"Input CSV must contain columns {expected}. Found: {list(df.columns)}")
-    df = df.sort_values(["Ticker", "Date"]).reset_index(drop=True)
-    print(f"[STEP] Loaded training panel: {df['Ticker'].nunique()} tickers, {df['Date'].nunique()} unique dates.")
-    return df
-
-
-def pivot_wide(df: pd.DataFrame) -> pd.DataFrame:
-    """
-    Pivot panel to a wide matrix Date x Ticker of LogReturn.
-    """
+    print(f"[LOAD] Loading training returns from '{train_csv}' ...")
+    df = pd.read_csv(train_csv, parse_dates=["Date"])
+    required = {"Date", "Ticker", "LogReturn"}
+    if not required.issubset(set(df.columns)):
+        raise ValueError(f"Training CSV must contain columns {required}. Found: {list(df.columns)}")
     wide = df.pivot(index="Date", columns="Ticker", values="LogReturn")
-    wide = wide.sort_index(axis=1)
-    return wide
+    print(f"[LOAD] Wide panel created: {wide.shape[0]} dates x {wide.shape[1]} tickers.")
+    return wide, list(wide.columns)
 
 
-def plot_and_save_heatmap(mat: np.ndarray, labels: List[str], filename: str, annotate_limit: int = 40, title: Optional[str] = None):
+def pairwise_covariance_matrix(wide: pd.DataFrame) -> pd.DataFrame:
     """
-    Save heatmap with sensible defaults. If many tickers, omit axis labels for legibility.
+    Compute pairwise-complete covariance matrix:
+      Sigma[i,j] = cov(x_i, x_j) using only observations where both are present.
+
+    This avoids dropping dates with any missingness across the entire panel.
     """
-    plt.figure(figsize=(8, 6))
-    sns.heatmap(mat, xticklabels=(labels if len(labels) <= annotate_limit else False),
-                yticklabels=(labels if len(labels) <= annotate_limit else False),
-                cmap="vlag", center=0)
+    print("[COV] Computing pairwise-complete covariance matrix...")
+    cols = wide.columns
+    N = len(cols)
+    Sigma = np.zeros((N, N), dtype=float)
+
+    # For numerical stability, convert to numpy arrays once
+    # but we need to access masks by column
+    for i in range(N):
+        xi = wide.iloc[:, i]
+        for j in range(i, N):
+            xj = wide.iloc[:, j]
+            valid = xi.notna() & xj.notna()
+            nobs = int(valid.sum())
+            if nobs > 1:
+                # use np.cov on the aligned non-NA values; ddof=1 (sample covariance)
+                cov_ij = np.cov(xi[valid].values, xj[valid].values, ddof=1)[0, 1]
+                Sigma[i, j] = cov_ij
+                Sigma[j, i] = cov_ij
+            else:
+                # Not enough overlapping observations -> set to 0 (will be corrected by PSD projection)
+                Sigma[i, j] = 0.0
+                Sigma[j, i] = 0.0
+
+    Sigma_df = pd.DataFrame(Sigma, index=cols, columns=cols)
+    print(f"[COV] Pairwise covariance computed. Some pairs may have few observations; check diagnostics if needed.")
+    return Sigma_df
+
+
+def nearest_psd(A: np.ndarray, eps: float = 1e-8) -> np.ndarray:
+    """
+    Project symmetric matrix A to nearest positive semidefinite matrix by
+    eigenvalue clipping. This simple projection is acceptable for producing a PSD matrix
+    to feed into downstream algorithms (LedoitWolf/OAS/GLASSO/PCA).
+    """
+    # Ensure symmetry
+    B = (A + A.T) / 2.0
+    eigvals, eigvecs = np.linalg.eigh(B)
+    eigvals_clipped = np.clip(eigvals, a_min=eps, a_max=None)
+    B_psd = (eigvecs @ np.diag(eigvals_clipped)) @ eigvecs.T
+    # Re-enforce symmetry
+    B_psd = (B_psd + B_psd.T) / 2.0
+    return B_psd
+
+
+def save_matrix_csv(mat: np.ndarray, labels: List[str], path: str):
+    df = pd.DataFrame(mat, index=labels, columns=labels)
+    df.to_csv(path)
+    print(f"[SAVE] Saved matrix to: {path}")
+
+
+def plot_heatmap(mat: np.ndarray, labels: List[str], path: str, title: str = None, cmap="viridis"):
+    plt.figure(figsize=(10, 8))
+    sns.heatmap(mat, xticklabels=labels, yticklabels=labels, cmap=cmap)
     if title:
         plt.title(title)
     plt.tight_layout()
-    plt.savefig(filename)
+    plt.savefig(path, dpi=300)
     plt.close()
-    print(f"[PLOT] Saved heatmap to {filename}")
+    print(f"[PLOT] Saved heatmap: {path}")
 
 
-def plot_scree(eigvals: np.ndarray, filename: str, title: str = "Scree plot (eigvals)"):
-    plt.figure(figsize=(6, 4))
-    plt.plot(np.arange(1, len(eigvals) + 1), np.sort(eigvals)[::-1], marker="o")
-    plt.title(title)
-    plt.xlabel("Component")
-    plt.ylabel("Eigenvalue")
-    plt.tight_layout()
-    plt.savefig(filename)
-    plt.close()
-    print(f"[PLOT] Saved scree to {filename}")
+# -------------------------
+# Estimators
+# -------------------------
+def fit_ledoit_wolf(X: np.ndarray) -> Tuple[LedoitWolf, np.ndarray, float]:
+    """
+    Fit Ledoit–Wolf shrinkage estimator.
+    Returns model object, covariance matrix, and shrinkage factor delta.
+    """
+    print("[LW] Fitting Ledoit-Wolf shrinkage estimator...")
+    model = LedoitWolf().fit(X)
+    cov = model.covariance_
+    delta = float(model.shrinkage_)
+    print(f"[LW] Done. Shrinkage δ = {delta:.6f}")
+    return model, cov, delta
 
 
-# ---------------------------
-# Estimators: training functions
-# ---------------------------
-
-def estimate_sample_cov(X: np.ndarray) -> np.ndarray:
-    """Sample covariance (population MLE: ddof=0)."""
-    return np.cov(X, rowvar=False, bias=True)
-
-
-def estimate_ledoit_wolf(X: np.ndarray) -> Tuple[np.ndarray, Any]:
-    lw = LedoitWolf().fit(X)
-    return lw.covariance_, lw
+def fit_oas(X: np.ndarray) -> Tuple[OAS, np.ndarray, float]:
+    """
+    Fit Oracle Approximating Shrinkage (OAS).
+    """
+    print("[OAS] Fitting OAS estimator...")
+    model = OAS().fit(X)
+    cov = model.covariance_
+    delta = float(model.shrinkage_)
+    print(f"[OAS] Done. Shrinkage δ = {delta:.6f}")
+    return model, cov, delta
 
 
-def estimate_oas(X: np.ndarray) -> Tuple[np.ndarray, Any]:
-    oas = OAS().fit(X)
-    return oas.covariance_, oas
-
-
-def estimate_pca_cov(X: np.ndarray, explained_target: float = 0.90) -> Tuple[np.ndarray, Dict[str, Any]]:
-    pca_full = PCA(n_components=min(X.shape[1], X.shape[0]))
-    pca_full.fit(X)
-    cumvar = np.cumsum(pca_full.explained_variance_ratio_)
+def fit_pca_covariance(X: np.ndarray, explained_target: float = 0.90) -> Tuple[PCA, np.ndarray, int]:
+    """
+    Fit PCA on X (observations x variables) and reconstruct covariance
+    using the minimal k components that reach explained_target cumulative variance.
+    Returns PCA object, reconstructed covariance, and k.
+    """
+    print("[PCA] Fitting PCA and selecting components for target explained variance...")
+    pca = PCA()
+    pca.fit(X)
+    cumvar = np.cumsum(pca.explained_variance_ratio_)
     k = int(np.searchsorted(cumvar, explained_target) + 1)
-    pca_k = PCA(n_components=k).fit(X)
-    cov_rec = pca_k.get_covariance()
-    meta = {"n_components": k, "explained_variance": float(cumvar[k - 1])}
-    return cov_rec, meta
+    # Reconstruct covariance: Cov ≈ V_k Λ_k V_k^T (component loadings times variances)
+    components_k = pca.components_[:k, :]  # shape k x N
+    vars_k = pca.explained_variance_[:k]   # length k
+    cov_pca = (components_k.T * vars_k) @ components_k
+    print(f"[PCA] Selected k = {k} components to reach {explained_target*100:.0f}% explained variance.")
+    return pca, cov_pca, k
 
 
-def estimate_glasso_cv(X: np.ndarray, alphas: Optional[List[float]] = None) -> Tuple[np.ndarray, Dict[str, Any]]:
-    """Simple GLASSO alpha grid search using sklearn GraphicalLasso.score as selection criterion."""
-    from sklearn.covariance import GraphicalLasso
+def fit_glasso_cv(X: np.ndarray, alphas: List[float] = None) -> Tuple[GraphicalLassoCV, np.ndarray, float]:
+    """
+    Fit GraphicalLassoCV to select alpha and return fitted model and covariance.
+    """
+    print("[GLASSO] Running GraphicalLassoCV to find best alpha (this may take time)...")
     if alphas is None:
-        alphas = list(np.logspace(-4, -1, 10))
-    best_score = -np.inf
-    best_alpha = None
-    best_model = None
-    for a in alphas:
-        try:
-            model = GraphicalLasso(alpha=a, max_iter=200)
-            model.fit(X)
-            score = model.score(X)
-            print(f"[GLASSO] alpha={a:.4g} score={score:.4f}")
-            if score > best_score:
-                best_score = score
-                best_alpha = a
-                best_model = model
-        except Exception as e:
-            warnings.warn(f"GLASSO alpha {a} failed: {e}")
-    if best_model is None:
-        raise RuntimeError("GLASSO calibration failed for all alphas")
-    return best_model.covariance_, {"best_alpha": best_alpha, "score": best_score, "model": best_model}
+        alphas = np.logspace(-4, -1, 10)
+    gl_cv = GraphicalLassoCV(alphas=alphas, cv=4).fit(X)
+    best_alpha = float(gl_cv.alpha_)
+    print(f"[GLASSO] Best alpha found by CV: {best_alpha:.6e}. Re-fitting GraphicalLasso with this alpha...")
+    glasso = GraphicalLasso(alpha=best_alpha, max_iter=1000).fit(X)
+    cov = glasso.covariance_
+    return gl_cv, cov, best_alpha
 
 
-# ---------------------------
-# Multivariate GARCH / DCC baseline
-# ---------------------------
-
-def estimate_dcc_with_mvgarch(wide_df: pd.DataFrame, subset_tickers: List[str], random_state: int = 42) -> Tuple[np.ndarray, Dict[str, Any]]:
+# -------------------------
+# Pipeline
+# -------------------------
+def run_classical_estimators_pipeline(train_csv: str = TRAIN_PATH, outdir: str = OUT_DIR):
     """
-    Try to estimate DCC-GARCH using an installed multivariate-GARCH package.
-
-    Strategy:
-    - If `mvgarch` is available, use its API.
-    - Else if `mgarch` is available, use its API.
-    - Else, fallback to the sample covariance and record fallback in metadata.
-
-    Important:
-    - Different packages have different APIs; here we attempt common patterns
-      but also include clear error handling and informative prints.
+    Main pipeline to compute pairwise covariance, PSD-correct it, fit estimators,
+    generate plots, and save summary.
     """
-    metadata: Dict[str, Any] = {}
-    if DCC_LIB is None:
-        warnings.warn("No multivariate GARCH library found; falling back to sample covariance for DCC baseline.")
-        return estimate_sample_cov(wide_df[subset_tickers].values), {"dcc_used": False, "reason": "no library"}
+    print("\n[PIPELINE] Starting classical estimators pipeline...")
+    os.makedirs(outdir, exist_ok=True)
+    os.makedirs(PLOTS_DIR, exist_ok=True)
 
-    # deterministic random pick (seed) – selection already performed by caller ideally
-    np.random.seed(random_state)
-    X_sub = wide_df[subset_tickers].dropna()
-    print(f"[DCC] Subset for DCC: {X_sub.shape[0]} timepoints x {X_sub.shape[1]} tickers")
+    # 1) Load wide panel
+    wide, tickers = load_training_wide(train_csv)
 
-    try:
-        if DCC_LIB_NAME == "mvgarch":
-            # Example usage pattern for mvgarch (note: actual API may differ; adjust if necessary)
-            # This block tries to be robust: we call common names and catch exceptions.
-            print("[DCC] Attempting to fit DCC via 'mvgarch' package...")
-            model = DCC_LIB.MVGARCH(X_sub)  # hypothetical: MVGARCH wrapper
-            res = model.fit()               # hypothetical usage
-            # Suppose res has attribute covariances: (T, N, N)
-            cov_ts = getattr(res, "covariances", None)
-            if cov_ts is None:
-                # try alternative attribute names or fallback
-                cov_ts = getattr(res, "Sigma_t", None)
-            if cov_ts is None:
-                raise RuntimeError("mvgarch fit returned no covariance series attribute - please inspect the library API.")
-            avg_cov = np.mean(cov_ts, axis=0)
-            metadata.update({"dcc_used": True, "library": "mvgarch", "n_time": cov_ts.shape[0]})
-            print("[DCC] mvgarch DCC fit complete.")
-            return avg_cov, metadata
+    # 2) Compute pairwise-complete covariance
+    Sigma_pairwise = pairwise_covariance_matrix(wide)
+    save_matrix_csv(Sigma_pairwise.values, tickers, os.path.join(outdir, "pairwise_cov_raw.csv"))
+    plot_heatmap(Sigma_pairwise.values, tickers, os.path.join(PLOTS_DIR, "heatmap_pairwise_raw.png"),
+                 title="Pairwise-Complete Raw Covariance")
 
-        elif DCC_LIB_NAME == "mgarch":
-            print("[DCC] Attempting to fit DCC via 'mgarch' package...")
-            # Hypothetical API usage for mgarch
-            model = DCC_LIB.DCC(X_sub)
-            res = model.fit()
-            cov_ts = getattr(res, "covariances", None) or getattr(res, "Sigma_t", None)
-            if cov_ts is None:
-                raise RuntimeError("mgarch result lacks covariance time-series attribute.")
-            avg_cov = np.mean(cov_ts, axis=0)
-            metadata.update({"dcc_used": True, "library": "mgarch", "n_time": cov_ts.shape[0]})
-            print("[DCC] mgarch DCC fit complete.")
-            return avg_cov, metadata
+    # 3) Project to nearest PSD
+    print("[COV->PSD] Projecting pairwise matrix to nearest PSD (eigenvalue clipping)...")
+    Sigma_psd = nearest_psd(Sigma_pairwise.values)
+    save_matrix_csv(Sigma_psd, tickers, os.path.join(outdir, "pairwise_cov_psd.csv"))
+    plot_heatmap(Sigma_psd, tickers, os.path.join(PLOTS_DIR, "heatmap_pairwise_psd.png"),
+                 title="Pairwise Covariance (PSD-projected)")
 
-        else:
-            raise RuntimeError("Unknown DCC_LIB_NAME encountered.")
-    except Exception as e:
-        warnings.warn(f"DCC fit via {DCC_LIB_NAME} failed: {e}. Falling back to sample covariance for subset.")
-        return estimate_sample_cov(X_sub.values), {"dcc_used": False, "error": str(e)}
+    # 4) Prepare data matrix X for estimators
+    # Most sklearn estimators expect rows = observations, cols = variables.
+    # We need a design matrix X that reasonably represents joint observations.
+    # Strategy: use the original wide panel but substitute NaNs with column means (unbiased) OR zero.
+    # Here we choose column mean imputation (simple and standard for these estimators).
+    print("[PREP] Preparing data matrix X for estimators with column-mean imputation.")
+    X = wide.copy()
+    col_means = X.mean(axis=0)
+    X_imputed = X.fillna(col_means)
+    X_values = X_imputed.values  # shape T x N
 
+    # Standardize columns (zero mean) - many estimators assume centered data; shrinkage uses raw second moments, but centering is standard.
+    X_centered = X_values - np.nanmean(X_values, axis=0)
 
-# ---------------------------
-# Main training routine
-# ---------------------------
+    # 5) Raw sample covariance computed from imputed X (for comparison)
+    cov_raw_from_imputed = np.cov(X_centered, rowvar=False)
+    save_matrix_csv(cov_raw_from_imputed, tickers, os.path.join(outdir, "cov_from_imputed_raw.csv"))
+    plot_heatmap(cov_raw_from_imputed, tickers, os.path.join(PLOTS_DIR, "heatmap_cov_imputed_raw.png"),
+                 title="Sample Covariance (imputed)")
 
-def train_all_models(train_returns_path: str = "data/train_returns.csv",
-                     dcc_subset_n: int = 30,
-                     random_state: int = 42,
-                     pca_explained: float = 0.90,
-                     glasso_alphas: Optional[List[float]] = None) -> pd.DataFrame:
-    """
-    Master training pipeline that fits the DCC baseline (on subset) and the
-    static/regularized estimators on the full cleaned training set.
-    """
-
-    ensure_dirs()
-    print("[START] Loading training data...")
-    panel = load_training_returns(train_returns_path)
-
-    # Pivot and conservative cleaning: drop tickers with >25% missing and drop any NA rows
-    wide = pivot_wide(panel)
-    na_frac = wide.isna().mean()
-    keep = na_frac[na_frac <= 0.25].index.tolist()
-    print(f"[CLEAN] Keeping {len(keep)} tickers (<=25% missing).")
-    wide = wide[keep]
-    wide = wide.dropna(axis=0, how="any")
-    print(f"[CLEAN] After dropna: {wide.shape[0]} dates x {wide.shape[1]} tickers.")
-
-    # Full matrix for static estimators
-    X = wide.values  # T x N
-
-    # Save sample covariance (benchmark)
-    cov_sample = estimate_sample_cov(X)
-    pd.DataFrame(cov_sample, index=wide.columns, columns=wide.columns).to_csv("tests/covariances/cov_sample.csv")
-    joblib.dump({"type": "sample_cov"}, "tests/models/sample_meta.pkl")
-    print("[SAVE] Sample covariance saved.")
-
-    # DCC baseline: select seeded random subset of tickers
-    print(f"[DCC] Selecting {dcc_subset_n} tickers (seed={random_state}) for DCC baseline...")
-    rng = np.random.RandomState(random_state)
-    if dcc_subset_n >= len(wide.columns):
-        subset = list(wide.columns)
-    else:
-        subset = list(rng.choice(wide.columns, size=dcc_subset_n, replace=False))
-    print(f"[DCC] Subset selected: {subset[:8]}... (total {len(subset)})")
-
-    cov_dcc, meta_dcc = estimate_dcc_with_mvgarch(wide, subset, random_state=random_state)
-    pd.DataFrame(cov_dcc, index=subset, columns=subset).to_csv("tests/covariances/cov_dcc.csv")
-    joblib.dump(meta_dcc, "tests/models/dcc_meta.pkl")
-    print("[SAVE] DCC baseline covariance and meta saved (or fallback).")
-
-    # Ledoit-Wolf
-    print("[TRAIN] Estimating Ledoit-Wolf shrinkage...")
-    cov_lw, lw_model = estimate_ledoit_wolf(X)
-    pd.DataFrame(cov_lw, index=wide.columns, columns=wide.columns).to_csv("tests/covariances/cov_ledoitwolf.csv")
-    joblib.dump(lw_model, "tests/models/ledoitwolf_model.pkl")
-    print("[SAVE] Ledoit-Wolf model saved.")
-
-    # OAS
-    print("[TRAIN] Estimating OAS shrinkage...")
-    cov_oas, oas_model = estimate_oas(X)
-    pd.DataFrame(cov_oas, index=wide.columns, columns=wide.columns).to_csv("tests/covariances/cov_oas.csv")
-    joblib.dump(oas_model, "tests/models/oas_model.pkl")
-    print("[SAVE] OAS model saved.")
-
-    # PCA
-    print(f"[TRAIN] Fitting PCA to reach {pca_explained*100:.0f}% explained variance...")
-    cov_pca, meta_pca = estimate_pca_cov(X, explained_target=pca_explained)
-    pd.DataFrame(cov_pca, index=wide.columns, columns=wide.columns).to_csv("tests/covariances/cov_pca.csv")
-    joblib.dump(meta_pca, "tests/models/pca_meta.pkl")
-    print(f"[SAVE] PCA covariance and meta saved. Components: {meta_pca['n_components']}")
-
-    # GLASSO
-    print("[TRAIN] Calibrating Graphical Lasso (alpha grid)...")
-    cov_glasso, meta_glasso = estimate_glasso_cv(X, alphas=glasso_alphas)
-    pd.DataFrame(cov_glasso, index=wide.columns, columns=wide.columns).to_csv("tests/covariances/cov_glasso.csv")
-    try:
-        joblib.dump(meta_glasso["model"], "tests/models/glasso_model.pkl")
-    except Exception:
-        joblib.dump(meta_glasso, "tests/models/glasso_meta.pkl")
-    print(f"[SAVE] GLASSO covariance and model saved. Best alpha: {meta_glasso.get('best_alpha')}")
-
-    # -------------------------
-    # Diagnostics & plots
-    # -------------------------
-    print("[PLOTS] Generating diagnostic plots...")
-
-    # Scree from sample covariance
-    eigvals = np.linalg.eigvalsh(cov_sample)[::-1]
-    plot_scree(eigvals, "results/plots/scree_sample.png")
-
-    # Heatmaps (limit labeling if many tickers)
-    plot_and_save_heatmap(cov_sample, list(wide.columns), "results/plots/cov_sample.png", title="Sample Covariance (training)")
-    plot_and_save_heatmap(cov_lw, list(wide.columns), "results/plots/cov_ledoitwolf.png", title="Ledoit-Wolf Covariance (training)")
-    plot_and_save_heatmap(cov_oas, list(wide.columns), "results/plots/cov_oas.png", title="OAS Covariance (training)")
-    plot_and_save_heatmap(cov_pca, list(wide.columns), "results/plots/cov_pca.png", title="PCA Reconstructed Covariance (training)")
-    plot_and_save_heatmap(cov_glasso, list(wide.columns), "results/plots/cov_glasso.png", title="GLASSO Covariance (training)")
-
-    # GLASSO sparsity if available
-    try:
-        precision = meta_glasso["model"].precision_
-        plot_and_save_heatmap((precision != 0).astype(int), list(wide.columns), "results/plots/glasso_sparsity.png", title="GLASSO Precision Sparsity (1=nonzero)")
-    except Exception:
-        print("[PLOT] GLASSO precision not available to plot sparsity.")
-
-    # Condition numbers plot
-    conds = {
-        "Sample": np.linalg.cond(cov_sample),
-        "LedoitWolf": np.linalg.cond(cov_lw),
-        "OAS": np.linalg.cond(cov_oas),
-        "PCA": np.linalg.cond(cov_pca),
-        "GLASSO": np.linalg.cond(cov_glasso),
-        "DCC-GARCH": (np.nan if not meta_dcc.get("dcc_used", False) else np.linalg.cond(cov_dcc))
-    }
-    # simple bar horizontal plot
-    plt.figure(figsize=(7, max(4, 0.4 * len(conds))))
-    sns.barplot(x=list(conds.values()), y=list(conds.keys()), palette="muted")
-    plt.xlabel("Condition Number")
-    plt.title("Condition numbers by estimator")
+    # 6) Ledoit-Wolf
+    lw_model, lw_cov, lw_delta = fit_ledoit_wolf(X_centered)
+    dump(lw_model, os.path.join(outdir, "ledoit_wolf.joblib"))
+    save_matrix_csv(lw_cov, tickers, os.path.join(outdir, "cov_ledoit_wolf.csv"))
+    # Plot shrinkage
+    plt.figure(figsize=(6, 4))
+    plt.bar(["Ledoit-Wolf"], [lw_delta])
+    plt.title("Ledoit-Wolf shrinkage delta")
     plt.tight_layout()
-    plt.savefig("results/plots/condition_numbers.png")
+    plt.savefig(os.path.join(PLOTS_DIR, "lw_shrinkage.png"), dpi=300)
+    plt.close()
+    print("[LW] Saved Ledoit-Wolf results.")
+
+    # 7) OAS
+    oas_model, oas_cov, oas_delta = fit_oas(X_centered)
+    dump(oas_model, os.path.join(outdir, "oas_model.joblib"))
+    save_matrix_csv(oas_cov, tickers, os.path.join(outdir, "cov_oas.csv"))
+    plt.figure(figsize=(6, 4))
+    plt.bar(["OAS"], [oas_delta])
+    plt.title("OAS shrinkage delta")
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "oas_shrinkage.png"), dpi=300)
+    plt.close()
+    print("[OAS] Saved OAS results.")
+
+    # 8) PCA
+    pca_model, pca_cov, k = fit_pca_covariance(X_centered, explained_target=0.90)
+    dump(pca_model, os.path.join(outdir, "pca_model.joblib"))
+    save_matrix_csv(pca_cov, tickers, os.path.join(outdir, "cov_pca.csv"))
+    # PCA scree plot
+    ratios = np.cumsum(pca_model.explained_variance_ratio_)
+    plt.figure(figsize=(8, 4))
+    plt.plot(np.arange(1, len(ratios) + 1), ratios, marker="o")
+    plt.axhline(0.9, color="red", linestyle="--", label="90% explained")
+    plt.title("PCA cumulative explained variance")
+    plt.xlabel("Number of principal components")
+    plt.ylabel("Cumulative explained variance")
+    plt.legend()
+    plt.grid(alpha=0.25)
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "pca_scree.png"), dpi=300)
+    plt.close()
+    print(f"[PCA] Saved PCA results. k = {k}")
+
+    # 9) Graphical Lasso (CV)
+    gl_model_cv, gl_cov, gl_alpha = fit_glasso_cv(X_centered)
+    dump(gl_model_cv, os.path.join(outdir, "glasso_cv_model.joblib"))
+    save_matrix_csv(gl_cov, tickers, os.path.join(outdir, "cov_glasso.csv"))
+    # Sparsity pattern of precision matrix
+    precision = gl_model_cv.covariance_precision_ if hasattr(gl_model_cv, "covariance_precision_") else gl_model_cv.precision_
+    plt.figure(figsize=(8, 6))
+    sns.heatmap((precision != 0).astype(int), cmap="binary")
+    plt.title("GLASSO sparsity pattern (precision non-zero)")
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "glasso_sparsity.png"), dpi=300)
+    plt.close()
+    print(f"[GLASSO] Saved GLASSO results. Best alpha = {gl_alpha:.6e}")
+
+    # 10) Additional diagnostic plots: condition numbers and eigenvalue traces
+    def condnum(mat: np.ndarray) -> float:
+        return float(np.linalg.cond(mat))
+
+    mats = {
+        "Raw (pairwise)": Sigma_pairwise.values,
+        "PSD pairwise": Sigma_psd,
+        "Raw (imputed)": cov_raw_from_imputed,
+        "Ledoit-Wolf": lw_cov,
+        "OAS": oas_cov,
+        "PCA": pca_cov,
+        "GLASSO": gl_cov
+    }
+
+    conds = {name: condnum(mat) for name, mat in mats.items()}
+    # Bar plot of condition numbers
+    plt.figure(figsize=(8, 5))
+    sns.barplot(x=list(conds.values()), y=list(conds.keys()), palette="muted")
+    plt.xlabel("Condition number")
+    plt.title("Condition numbers of candidate covariance matrices")
+    plt.tight_layout()
+    plt.savefig(os.path.join(PLOTS_DIR, "condition_numbers.png"), dpi=300)
     plt.close()
     print("[PLOT] Saved condition numbers plot.")
 
-    # -------------------------
-    # Summary table
-    # -------------------------
-    print("[SUMMARY] Building summary table of diagnostics and meta...")
+    # Eigenvalue trace over models (sorted)
+    eig_traces = {}
+    for name, mat in mats.items():
+        try:
+            eigs = np.linalg.eigvalsh(mat)
+            eig_traces[name] = np.sum(eigs)  # trace = sum eigenvalues
+        except Exception:
+            eig_traces[name] = float("nan")
 
-    rows = []
-    models = {
-        "Sample": (cov_sample, {}),
-        "DCC-GARCH": (cov_dcc, meta_dcc),
-        "LedoitWolf": (cov_lw, {"model": "LedoitWolf"}),
-        "OAS": (cov_oas, {"model": "OAS"}),
-        "PCA": (cov_pca, meta_pca),
-        "GLASSO": (cov_glasso, {"meta": meta_glasso})
-    }
+    trace_df = pd.DataFrame([eig_traces])
+    trace_df.to_csv(os.path.join(outdir, "eigenvalue_traces.csv"), index=False)
+    print("[SAVE] Saved eigenvalue traces.")
 
-    for name, (covm, meta) in models.items():
-        eigs = np.linalg.eigvalsh(covm)
-        posdef = bool(np.all(eigs > 0))
-        cond = float(np.linalg.cond(covm))
-        N = covm.shape[0]
-        ew_var = float(np.ones(N) @ covm @ np.ones(N) / (N**2))
-        frob_to_sample = float(np.linalg.norm(covm - cov_sample, ord="fro"))
-        rows.append({
-            "Model": name,
-            "PositiveDefinite": posdef,
-            "ConditionNumber": cond,
-            "EqualWeightPortfolioVar": ew_var,
-            "FrobeniusToSample": frob_to_sample,
-            "Meta": str(meta)
-        })
-
-    summary_df = pd.DataFrame(rows)
-    summary_csv = "results/covariance_training_summary.csv"
+    # 11) Build summary table and save
+    summary_rows = [
+        {"Model": "Pairwise Raw", "KeyParameter": "N/A", "CondNumber": conds["Raw (pairwise)"], "Notes": "Pairwise covariance (no PSD)"},
+        {"Model": "Pairwise PSD", "KeyParameter": "eigenclip", "CondNumber": conds["PSD pairwise"], "Notes": "PSD-projected pairwise matrix"},
+        {"Model": "Raw (imputed)", "KeyParameter": "impute=colmean", "CondNumber": conds["Raw (imputed)"], "Notes": "Raw from column-mean imputed panel"},
+        {"Model": "Ledoit-Wolf", "KeyParameter": f"δ={lw_delta:.6f}", "CondNumber": conds["Ledoit-Wolf"], "Notes": "Shrinkage estimator"},
+        {"Model": "OAS", "KeyParameter": f"δ={oas_delta:.6f}", "CondNumber": conds["OAS"], "Notes": "Oracle-approx shrinkage"},
+        {"Model": "PCA", "KeyParameter": f"k={k}", "CondNumber": conds["PCA"], "Notes": "Low-rank factor covariance"},
+        {"Model": "GLASSO", "KeyParameter": f"alpha={gl_alpha:.6e}", "CondNumber": conds["GLASSO"], "Notes": "Sparse precision (Graphical Lasso)"}
+    ]
+    summary_df = pd.DataFrame(summary_rows)
+    summary_csv = os.path.join(outdir, "classical_estimators_summary.csv")
     summary_df.to_csv(summary_csv, index=False)
-    joblib.dump({"meta_dcc": meta_dcc, "meta_glasso": meta_glasso, "meta_pca": meta_pca}, "tests/models/all_models_meta.pkl")
-    print(f"[SAVE] Summary CSV saved to {summary_csv} and metadata pickled.")
+    print(f"[SUMMARY] Summary table saved: {summary_csv}")
 
-    print("[DONE] Training completed successfully.")
-    return summary_df
+    print("\n[SUMMARY TABLE]")
+    print(summary_df.to_string(index=False))
+
+    print("\n[PIPELINE] Classical estimators pipeline finished.")
+
+    # Return summary and models for programmatic use
+    results = {
+        "Sigma_pairwise": Sigma_pairwise,
+        "Sigma_psd": Sigma_psd,
+        "lw_model": lw_model,
+        "oas_model": oas_model,
+        "pca_model": pca_model,
+        "glasso_cv": gl_model_cv,
+        "summary": summary_df
+    }
+    return results
 
 
-# ---------------------------
-# Run when executed
-# ---------------------------
+# If executed as script
 if __name__ == "__main__":
-    summary = train_all_models()
-    print("\n=== Training summary ===")
-    print(summary.to_string(index=False))
+    run_classical_estimators_pipeline()
