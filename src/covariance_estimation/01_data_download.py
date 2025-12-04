@@ -1,4 +1,6 @@
 """
+DATA DOWNLOAD AND CLEANING MODULE:
+
 Utility functions to download, transform, clean, and validate financial time series data.
 
 The data pipeline follows these steps:
@@ -9,10 +11,8 @@ The data pipeline follows these steps:
 3. Convert the MultiIndex structure produced by yfinance into a flat, tabular dataset.
 4. Clean the dataset by removing invalid values, duplicates, and non-numeric entries.
 5. Validate the resulting dataset using basic quality checks.
-6. Save the cleaned dataset into CSV format for further analysis.
+6. Save the cleaned dataset into CSV format for further analysis in the project.
 
-This script provides a reproducible and academically rigorous data ingestion workflow
-for covariance estimation and other financial econometrics applications.
 """
 
 import pandas as pd
@@ -67,20 +67,20 @@ def get_sp500_tickers():
 
     tickers = [t.replace(".", "-") for t in table["Symbol"].tolist()]
 
-    print("\n[INFO] Total S&P 500 tickers retrieved:", len(tickers))
-    print("[INFO] Tickers used:\n", tickers)
+    print("\n Total S&P 500 tickers retrieved:", len(tickers))
+    print("Tickers used:\n", tickers)
 
     return tickers
 
 
 
 # =====================================================================
-# 2. Download price data using yfinance (with explicit date range)
+# 2. Download price data using yfinance 
 # =====================================================================
 
 def download_prices(tickers, start_date, end_date):
     """
-    Download OHLCV price data for all tickers within the specified date range.
+    Download Open, High, Low, Close, Adjusted Close, Volume price data for all tickers within the specified date range.
 
     Parameters
     ----------
@@ -97,7 +97,7 @@ def download_prices(tickers, start_date, end_date):
         MultiIndex DataFrame with (Variable, Ticker) columns.
     """
 
-    print(f"\n[DOWNLOAD] Downloading data for {len(tickers)} tickers")
+    print(f"\n Downloading data for {len(tickers)} tickers")
     print(f"           From: {start_date}  To: {end_date}")
 
     df = yf.download(
@@ -142,7 +142,7 @@ def flatten_to_csv(df, output_path="data/sp500_prices_raw.csv"):
     flat = flat.reset_index()
 
     flat.to_csv(output_path, index=False)
-    print(f"[FLATTEN] Saved RAW flattened dataset → {output_path}")
+    print(f"[FLATTEN] Saved RAW flattened dataset -> {output_path}")
 
     return flat
 
@@ -188,7 +188,7 @@ def clean_prices(df):
 
 def validate_prices(df):
     """
-    Generates a diagnostic summary for data validation.
+    Generates a diagnostic summary for data validation after cleaning.
     """
 
     summary = {
@@ -207,7 +207,7 @@ def validate_prices(df):
 
 
 # =====================================================================
-# 6. Full pipeline wrapper
+# 6. Full pipeline for data download and processing
 # =====================================================================
 
 def full_download(output_path="data/sp500_prices_clean.csv"):
@@ -231,13 +231,13 @@ def full_download(output_path="data/sp500_prices_clean.csv"):
     cleaned.to_csv(output_path, index=False)
     print(f"\n[SAVE] CLEAN dataset saved to: {output_path}")
 
-    print("\n========== PIPELINE COMPLETED SUCCESSFULLY ==========\n")
+    print("\n========== DATA DOWNLOAD AND CLEAN COMPLETED SUCCESSFULLY ==========\n")
     return cleaned
 
 
 
 # =====================================================================
-# 7. Script entry point
+# 7. Script to main pipeline
 # =====================================================================
 
 if __name__ == "__main__":

@@ -1,12 +1,12 @@
 """
-data_split.py
+DATA SPLITTING MODULE:
 
 This module performs a chronological time-series split for a panel dataset
-containing multiple equities stacked vertically. Each ticker's price history is
-split individually into a training and validation set to ensure methodological
+containing multiple equities stacked vertically. Each ticker's price history is sorted
+and splitted individually into a training and validation set (80%/20%) to ensure methodological
 correctness and avoid cross-sectional leakage.
 
-The script loads the cleaned dataset from:
+The script loads the cleaned dataset generated before from:
     data/sp500_prices_clean.csv
 
 It outputs:
@@ -21,14 +21,14 @@ import os
 def chronological_panel_split(df: pd.DataFrame, train_ratio: float = 0.8):
     """
     Perform a chronological split for each ticker in the panel dataset.
-
-    Academic justification:
-    -----------------------
-    Financial time-series must be split chronologically because future data
-    cannot be used to inform past model estimation (Hyndman & Athanasopoulos, 2018).
+    
+    Financial time-series must be split chronologically because future data from one ticker
+    cannot be used to inform past model estimation for another ticker.
     For panel equity data, treating the dataset as a simple row-wise sequence
     is incorrect because tickers differ in history length and ordering. Therefore,
     each ticker must be split independently, maintaining temporal integrity.
+
+    The standard split ratio is 80% training and 20% validation, applied per ticker.
 
     Parameters
     ----------
