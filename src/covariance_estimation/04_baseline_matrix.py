@@ -5,6 +5,12 @@ Baseline Sample Covariance Matrix Computation Module
 This script computes the baseline *sample covariance matrix* using
 pairwise-complete observations from the training set of asset log-returns.
 
+MAIN IMPROVEMENT IN THIS VERSION:
+---------------------------------
+The saved covariance matrix now includes row/column labels (tickers) 
+embedded directly in the CSV file. This ensures full compatibility with 
+later validation modules that require consistent asset ordering.
+
 STRUCTURE:
 ----------
 The code is organized into modular functions so it can be imported and
@@ -12,14 +18,12 @@ reused within the project's final pipeline (main.py).
 
 OUTPUTS:
 --------
-- baseline_cov_matrix.csv
+- baseline_cov_matrix.csv 
 - covariance_heatmap.png
 - correlation_heatmap.png
 - variance_distribution.png
 
-AUTHOR:
--------
-Your Name - 2025
+
 """
 
 import os
@@ -34,12 +38,12 @@ import seaborn as sns
 # ---------------------------------------------------------------------
 def load_data(path):
     """
-    Load the raw CSV containing daily asset log returns in *long format*.
+    Load the raw CSV containing daily asset log returns in long format.
 
     Parameters
     ----------
     path : str
-        Path to train_returns.csv
+        Path to train_returns.csv.
 
     Returns
     -------
@@ -69,7 +73,7 @@ def pivot_returns(df):
     Returns
     -------
     pivot : pd.DataFrame
-        Wide-format matrix (n_days x n_assets)
+        Wide-format matrix (n_days × n_assets)
     """
     print("[INFO] Converting Date column to datetime...")
     df["Date"] = pd.to_datetime(df["Date"])
@@ -105,19 +109,23 @@ def compute_covariance(pivot):
     -------
     cov_matrix : pd.DataFrame
         Covariance matrix (n_assets × n_assets)
+        Indexed and column-labeled by tickers.
     """
     print("[INFO] Computing sample covariance matrix...")
     cov_matrix = pivot.cov(min_periods=1)
+
     print("[INFO] Covariance matrix computed. Shape:", cov_matrix.shape)
     return cov_matrix
 
 
 # ---------------------------------------------------------------------
-# 4. SAVE RESULTS
+# 4. SAVE RESULTS (WITH TICKERS INCLUDED)
 # ---------------------------------------------------------------------
-def save_results(cov_matrix, outdir="results"):
+def save_results(cov_matrix, outdir="results/training/baseline"):
     """
-    Save covariance matrix to CSV.
+    Save covariance matrix to CSV, preserving tickers in both rows and columns.
+
+    This ensures the validation module can load the correct asset ordering.
 
     Parameters
     ----------
@@ -127,14 +135,16 @@ def save_results(cov_matrix, outdir="results"):
     os.makedirs(outdir, exist_ok=True)
     outfile = os.path.join(outdir, "baseline_cov_matrix.csv")
 
-    cov_matrix.to_csv(outfile)
-    print(f"[INFO] Covariance matrix saved to: {outfile}")
+    # Save with index + header → tickers fully preserved
+    cov_matrix.to_csv(outfile, index=True)
+
+    print(f"[INFO] Covariance matrix (with tickers) saved to: {outfile}")
 
 
 # ---------------------------------------------------------------------
-# 5. PLOTS FOR DIAGNOSTICS
+# 5. DIAGNOSTIC PLOTS
 # ---------------------------------------------------------------------
-def generate_plots(cov_matrix, pivot, outdir="results"):
+def generate_plots(cov_matrix, pivot, outdir="results/training/baseline"):
     """
     Generate diagnostic plots:
     - covariance heatmap
@@ -162,7 +172,7 @@ def generate_plots(cov_matrix, pivot, outdir="results"):
     plt.close()
 
     # 3) Variance distribution
-    variances = np.diag(cov_matrix)
+    variances = np.diag(cov_matrix.values)
     plt.figure(figsize=(8, 6))
     plt.hist(variances, bins=40, edgecolor="black")
     plt.title("Distribution of Asset Variances")
@@ -176,10 +186,9 @@ def generate_plots(cov_matrix, pivot, outdir="results"):
 
 
 # ---------------------------------------------------------------------
-# 6. MAIN EXECUTION (used if running standalone)
-#    This will be replaced later by main.py pipeline calls.
+# 6. MAIN EXECUTION
 # ---------------------------------------------------------------------
-def main():
+def baseline_training():
     print("[INFO] Starting baseline covariance computation module...")
 
     df = load_data("data/train_returns.csv")
@@ -192,4 +201,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    baseline_training()

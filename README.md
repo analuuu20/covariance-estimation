@@ -38,13 +38,18 @@ covariance-estimation/
   git clone https://github.com/analuuu20/covariance-estimation.git
   cd covariance-estimation
 
+# Virtual environment 
+  conda activate covariance-estimation
+
 #  Installation requirements
-pip install -r requirements.txt
+   Alternatively, for remote usage the libraries used are in the requirements.txt file.
+   Use: 
+   pip install -r requirements.txt
 
-
-# Usage
-
-Examples will be provided in the `examples/` folder.
+   and for the "multigarch" library, the instalation is done through Github:
+   pip install git+https://github.com/mechanicpanic/multigarch.git
+   
+   "multigarch" library created by Anna Smirnova. 
 
 
 

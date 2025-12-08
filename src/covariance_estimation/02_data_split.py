@@ -6,6 +6,8 @@ containing multiple equities stacked vertically. Each ticker's price history is 
 and splitted individually into a training and validation set (80%/20%) to ensure methodological
 correctness and avoid cross-sectional leakage.
 
+The pipeline follows these steps:
+
 The script loads the cleaned dataset generated before from:
     data/sp500_prices_clean.csv
 

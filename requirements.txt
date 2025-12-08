@@ -13,3 +13,4 @@ requests
 lxml
 joblib
 seaborn
+multigarch

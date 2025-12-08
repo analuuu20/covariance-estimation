@@ -3,7 +3,7 @@ DATA DOWNLOAD AND CLEANING MODULE:
 
 Utility functions to download, transform, clean, and validate financial time series data.
 
-The data pipeline follows these steps:
+The pipeline follows these steps:
 
 1. Retrieve the list of S&P 500 constituents from Wikipedia.
 2. Download historical OHLCV (Open, High, Low, Close, Adjusted Close, Volume)

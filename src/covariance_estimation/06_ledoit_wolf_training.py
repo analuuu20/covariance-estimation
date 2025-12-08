@@ -9,11 +9,11 @@ This script:
 4. Fits a Ledoit-Wolf shrinkage covariance estimator
 5. Saves:
    - covariance matrix (CSV)
-   - trained model (pickle)
+   - trained model + tickers (pickle)
    - diagnostic plots
-6. Prints main statistics and returns results for main.py integration
+6. Returns model, covariance matrix and tickers
 
-Author: 2025
+
 """
 
 import os
@@ -54,15 +54,12 @@ def pivot_to_wide(df):
 def clean_and_impute(wide):
     print("[INFO] Cleaning data and imputing missing values...")
 
-    # Remove assets with too many missing values
     threshold = 0.8 * len(wide)
     wide = wide.dropna(axis=1, thresh=threshold)
     print(f"[INFO] After dropping sparse assets: {wide.shape[1]} assets remain.")
 
-    # Forward + backward fill
     wide = wide.ffill().bfill()
 
-    # Ensure no missing values remain
     assert not wide.isna().any().any(), "[ERROR] Missing values remain!"
 
     print("[INFO] Imputation complete.")
@@ -90,7 +87,7 @@ def fit_ledoit_wolf(wide):
 # =========================================================
 # 5. Save results
 # =========================================================
-def save_covariance_matrix(cov, tickers, outdir="results/ledoit_wolf"):
+def save_covariance_matrix(cov, tickers, outdir="results/training/ledoit_wolf"):
     os.makedirs(outdir, exist_ok=True)
 
     df_cov = pd.DataFrame(cov, index=tickers, columns=tickers)
@@ -101,23 +98,27 @@ def save_covariance_matrix(cov, tickers, outdir="results/ledoit_wolf"):
     return df_cov
 
 
-def save_model(model, outdir="results/ledoit_wolf"):
+def save_model_with_tickers(model, tickers, outdir="results/training/ledoit_wolf"):
+    """
+    Save model AND tickers together so they can be loaded in validation.
+    """
     os.makedirs(outdir, exist_ok=True)
+    payload = {"model": model, "tickers": tickers}
 
     path = os.path.join(outdir, "lw_model.pkl")
     with open(path, "wb") as f:
-        pickle.dump(model, f)
+        pickle.dump(payload, f)
 
-    print("[INFO] Trained Ledoit-Wolf model saved:", path)
+    print("[INFO] Trained Ledoit-Wolf model + tickers saved:", path)
 
 
-def save_plots(cov, tickers, outdir="results/ledoit_wolf"):
+def save_plots(cov, tickers, outdir="results/training/ledoit_wolf"):
     os.makedirs(outdir, exist_ok=True)
     print("[INFO] Generating diagnostic plots...")
 
     # Heatmap
     plt.figure(figsize=(12, 10))
-    sns.heatmap(cov, cmap="viridis", xticklabels=tickers, yticklabels=tickers)
+    sns.heatmap(cov, cmap="viridis", xticklabels=False, yticklabels=False)
     plt.title("Ledoit-Wolf Covariance Matrix (Heatmap)")
     plt.tight_layout()
     plt.savefig(os.path.join(outdir, "lw_covariance_heatmap.png"))
@@ -138,9 +139,16 @@ def save_plots(cov, tickers, outdir="results/ledoit_wolf"):
 
 
 # =========================================================
-# 6. Main pipeline handler
+# 6. PUBLIC TRAINING FUNCTION
 # =========================================================
-def main():
+def ledoit_wolf_training():
+    """
+    Public function used by main.py and the validation pipeline.
+    Returns:
+        model  (sklearn LedoitWolf)
+        cov    np.array N x N covariance matrix
+        tickers list of asset tickers
+    """
     print("\n[INFO] Starting Ledoit-Wolf Shrinkage Covariance Pipeline...\n")
 
     df = load_data("data/train_returns.csv")
@@ -153,7 +161,7 @@ def main():
     model, cov = fit_ledoit_wolf(wide)
 
     df_cov = save_covariance_matrix(cov, tickers)
-    save_model(model)
+    save_model_with_tickers(model, tickers)
     save_plots(cov, tickers)
 
     print("\n[INFO] Pipeline completed successfully.")
@@ -164,6 +172,8 @@ def main():
     return model, cov, tickers
 
 
-# Allow integration into main.py
+# =========================================================
+# 7. Allow running standalone
+# =========================================================
 if __name__ == "__main__":
-    main()
+    ledoit_wolf_training()

@@ -10,11 +10,9 @@ This script:
 5. Saves:
    - covariance matrix (CSV)
    - precision (inverse covariance) matrix (CSV)
-   - trained model (pickle)
+   - trained model + tickers (pickle)
    - diagnostic plots
-6. Prints main statistics and returns results for integration into main.py
-
-Author: 2025
+6. Returns model, covariance, precision, tickers
 """
 
 import os
@@ -55,12 +53,10 @@ def pivot_to_wide(df):
 def clean_and_impute(wide):
     print("[INFO] Cleaning data and imputing missing values...")
 
-    # Drop assets with too many missing observations
     threshold = 0.8 * len(wide)
     wide = wide.dropna(axis=1, thresh=threshold)
     print(f"[INFO] After dropping sparse assets: {wide.shape[1]} assets remain.")
 
-    # Forward fill then backward fill
     wide = wide.ffill().bfill()
 
     assert not wide.isna().any().any(), "[ERROR] Missing values remain!"
@@ -76,8 +72,6 @@ def fit_graphical_lasso(wide):
     print("[INFO] Fitting Graphical Lasso with CV (automatic alpha selection)...")
 
     X = wide.values  # T x N matrix
-
-    # GraphicalLassoCV computes α via cross-validation
     gl = GraphicalLassoCV(cv=5, n_jobs=-1).fit(X)
 
     print("[INFO] Graphical Lasso fitting completed.")
@@ -95,7 +89,7 @@ def fit_graphical_lasso(wide):
 # =========================================================
 # 5. Save results
 # =========================================================
-def save_covariance_matrix(cov, tickers, outdir="results/graphical_lasso"):
+def save_covariance_matrix(cov, tickers, outdir="results/training/graphical_lasso"):
     os.makedirs(outdir, exist_ok=True)
 
     df_cov = pd.DataFrame(cov, index=tickers, columns=tickers)
@@ -106,7 +100,7 @@ def save_covariance_matrix(cov, tickers, outdir="results/graphical_lasso"):
     return df_cov
 
 
-def save_precision_matrix(precision, tickers, outdir="results/graphical_lasso"):
+def save_precision_matrix(precision, tickers, outdir="results/training/graphical_lasso"):
     os.makedirs(outdir, exist_ok=True)
 
     df_prec = pd.DataFrame(precision, index=tickers, columns=tickers)
@@ -117,20 +111,25 @@ def save_precision_matrix(precision, tickers, outdir="results/graphical_lasso"):
     return df_prec
 
 
-def save_model(model, outdir="results/graphical_lasso"):
+def save_model_with_tickers(model, tickers, outdir="results/training/graphical_lasso"):
+    """
+    Save Graphical Lasso model + tickers together for validation pipeline.
+    """
     os.makedirs(outdir, exist_ok=True)
+
+    payload = {"model": model, "tickers": tickers}
+
     path = os.path.join(outdir, "gl_model.pkl")
-
     with open(path, "wb") as f:
-        pickle.dump(model, f)
+        pickle.dump(payload, f)
 
-    print("[INFO] Trained Graphical Lasso model saved:", path)
+    print("[INFO] Trained Graphical Lasso model + tickers saved:", path)
 
 
 # =========================================================
 # 6. Diagnostic Plots
 # =========================================================
-def save_plots(cov, precision, tickers, outdir="results/graphical_lasso"):
+def save_plots(cov, precision, tickers, outdir="results/training/graphical_lasso"):
     os.makedirs(outdir, exist_ok=True)
     print("[INFO] Generating diagnostic plots...")
 
@@ -142,7 +141,7 @@ def save_plots(cov, precision, tickers, outdir="results/graphical_lasso"):
     plt.savefig(os.path.join(outdir, "gl_cov_heatmap.png"))
     plt.close()
 
-    # Heatmap - Precision (sparser)
+    # Heatmap - Precision
     plt.figure(figsize=(12, 10))
     sns.heatmap(precision, cmap="coolwarm", center=0, xticklabels=False, yticklabels=False)
     plt.title("Graphical Lasso Precision Matrix (Heatmap)")
@@ -165,9 +164,17 @@ def save_plots(cov, precision, tickers, outdir="results/graphical_lasso"):
 
 
 # =========================================================
-# 7. Main Pipeline Handler
+# 7. PUBLIC TRAINING FUNCTION
 # =========================================================
-def graphical_lasso():
+def graphical_lasso_training():
+    """
+    Public function used by main.py and validation pipeline.
+    Returns:
+        model     GraphicalLassoCV fitted model
+        cov       covariance matrix
+        precision precision matrix
+        tickers   list of tickers
+    """
     print("\n[INFO] Starting Graphical Lasso Covariance Pipeline...\n")
 
     df = load_data("data/train_returns.csv")
@@ -181,7 +188,7 @@ def graphical_lasso():
 
     df_cov = save_covariance_matrix(cov, tickers)
     df_prec = save_precision_matrix(precision, tickers)
-    save_model(model)
+    save_model_with_tickers(model, tickers)
     save_plots(cov, precision, tickers)
 
     print("\n[INFO] Pipeline completed successfully.")
@@ -192,6 +199,8 @@ def graphical_lasso():
     return model, cov, precision, tickers
 
 
-# Allow integration into main.py
+# =========================================================
+# 8. Standalone run
+# =========================================================
 if __name__ == "__main__":
-    graphical_lasso()
+    graphical_lasso_training()
