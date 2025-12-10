@@ -1,4 +1,6 @@
 """
+02_data_split.py
+
 DATA SPLITTING MODULE:
 
 This module performs a chronological time-series split for a panel dataset
@@ -108,6 +110,9 @@ def validate_split(train_df: pd.DataFrame, val_df: pd.DataFrame):
         else:
             print(f"[OK] {ticker}: no leakage.")
 
+# ---------------------------------------------------------------------
+# MAIN EXECUTION
+# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
     # Load dataset

@@ -158,6 +158,7 @@ def portfolio_tracking_error(cov_pred: np.ndarray, cov_real: np.ndarray) -> floa
 # I/O helpers
 # ---------------------------
 def ensure_dir(path: str):
+    """Ensure directory exists."""
     os.makedirs(path, exist_ok=True)
 
 
@@ -384,9 +385,15 @@ def consolidate_and_score(models_results: List[Dict]) -> pd.DataFrame:
 
 
 # ---------------------------
-# Main pipeline
+# MAIN EXECUTION
 # ---------------------------
 def validation():
+    """
+    Full validation and consolidation pipeline.
+
+    """
+
+
     print("\n[INFO] ===== STARTING FULL VALIDATION & CONSOLIDATION PIPELINE =====\n")
 
     # 1) Load validation returns and prepare wide matrix

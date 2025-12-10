@@ -1,4 +1,6 @@
 """
+01_data_download.py
+
 DATA DOWNLOAD AND CLEANING MODULE:
 
 Utility functions to download, transform, clean, and validate financial time series data.
@@ -236,9 +238,9 @@ def full_download(output_path="data/sp500_prices_clean.csv"):
 
 
 
-# =====================================================================
-# 7. Script to main pipeline
-# =====================================================================
+# ---------------------------------------------------------------------
+# 7. MAIN EXECUTION
+# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
     full_download()

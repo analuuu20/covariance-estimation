@@ -200,7 +200,7 @@ def graphical_lasso_training():
 
 
 # =========================================================
-# 8. Standalone run
+# 8. MAIN EXECUTION
 # =========================================================
 if __name__ == "__main__":
     graphical_lasso_training()

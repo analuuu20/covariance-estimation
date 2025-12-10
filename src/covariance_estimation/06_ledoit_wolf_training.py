@@ -173,7 +173,7 @@ def ledoit_wolf_training():
 
 
 # =========================================================
-# 7. Allow running standalone
+# 7. MAIN EXECUTION
 # =========================================================
 if __name__ == "__main__":
     ledoit_wolf_training()

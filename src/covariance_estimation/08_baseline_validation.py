@@ -119,7 +119,7 @@ def save_validation_cov(cov, outdir="results/validation/baseline"):
 
 
 # ---------------------------------------------------------------------
-# 8. MAIN PIPELINE
+# 8. MAIN EXECUTION
 # ---------------------------------------------------------------------
 def baseline_validation():
     print("==== BASELINE VALIDATION COVARIANCE MODULE START ====")

@@ -1,5 +1,5 @@
 """
-returns_calculation.py
+03_returns_calculation.py
 
 This module computes log-returns for a panel dataset containing multiple equity
 tickers. Log-returns are calculated independently for each asset to preserve
@@ -84,6 +84,10 @@ def validate_returns_dataset(df: pd.DataFrame, set_name: str):
     else:
         print(f"\n[VALIDATION FAILED] {set_name} dataset contains {nan_count} NaN values in 'LogReturn'.")
 
+
+# ---------------------------------------------------------------------
+# MAIN EXECUTION
+# ---------------------------------------------------------------------
 
 if __name__ == "__main__":
     # --- 1. Define Input/Output Paths ---
