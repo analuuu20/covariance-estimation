@@ -1,0 +1,2 @@
+Model,Tickers Used,Missing in Validation,Missing in Model,Frobenius,Spectral,KL,TE
+ledoit_wolf,488,0,0,0.04044438362641426,0.03045477024252813,2568.2362876146412,2.418247432095783e-05

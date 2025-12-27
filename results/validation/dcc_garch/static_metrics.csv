@@ -1,0 +1,2 @@
+Model,Tickers Used,Missing in Validation,Missing in Model,Frobenius,Spectral,KL,TE
+dcc_garch,488,0,0,0.06530677599651905,0.054353906276863595,2355750.8912825123,0.0003135505100738153

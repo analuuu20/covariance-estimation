@@ -1,0 +1,2 @@
+Model,Tickers Used,Missing in Validation,Missing in Model,Frobenius,Spectral,KL,TE
+graphical_lasso,488,0,0,0.07237695948530681,0.06871486334884093,2405.3919671313856,8.421486340417666e-05

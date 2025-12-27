@@ -41,6 +41,8 @@ The project includes:
   "multigarch" library created by Anna Smirnova. 
 
 # Usage
+  The project follows a src/-based package layout. Individual modules are not imported at package level to avoid unintended side effects and to ensure reproducibility across environments. All execution is orchestrated explicitly through:
+
   python main.py
 
   Expected output: Comparison between three models through static, dynamic metrics and a normalized score.

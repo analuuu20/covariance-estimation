@@ -1,8 +1,7 @@
-# __init__.py
-from .data_utils import load_csv, prepare_returns, load_and_prepare
+# src/covariance_estimation/__init__.py
 
-__all__ = [
-    "load_csv",
-    "prepare_returns",
-    "load_and_prepare",
-]
+"""
+Covariance estimation package.
+
+Modules are executed via main.py.
+"""

@@ -1,0 +1,88 @@
+{
+  "started_at": "2025-12-27 19:51:44",
+  "steps": {
+    "01_data_download": {
+      "status": "ok",
+      "elapsed_s": 36.650803089141846
+    },
+    "02_data_split": {
+      "status": "ok",
+      "elapsed_s": 23.61908197402954
+    },
+    "03_returns_calculation": {
+      "status": "ok",
+      "elapsed_s": 8.020025491714478
+    },
+    "04_baseline_matrix": {
+      "status": "ok",
+      "elapsed_s": 7.172677755355835
+    },
+    "05_graphical_lasso": {
+      "status": "ok",
+      "n_tickers": 488
+    },
+    "06_ledoit_wolf": {
+      "status": "ok",
+      "n_tickers": 488
+    },
+    "07_dcc_garch": {
+      "status": "ok",
+      "tickers_kept": 488
+    },
+    "08_baseline_validation": {
+      "status": "ok"
+    },
+    "09_model_validation": {
+      "status": "ok",
+      "consolidated_head": [
+        {
+          "Model": "ledoit_wolf",
+          "Tickers Used": 488,
+          "Missing in Validation": 0,
+          "Missing in Model": 0,
+          "Frobenius": 0.04044438362641426,
+          "Spectral": 0.03045477024252813,
+          "KL": 2568.2362876146412,
+          "TE": 2.418247432095783e-05,
+          "Frobenius_norm": 0.0,
+          "Spectral_norm": 0.0,
+          "KL_norm": 6.919694559537864e-05,
+          "TE_norm": 0.0,
+          "score": 1.729923639884466e-05
+        },
+        {
+          "Model": "graphical_lasso",
+          "Tickers Used": 488,
+          "Missing in Validation": 0,
+          "Missing in Model": 0,
+          "Frobenius": 0.07237695948530681,
+          "Spectral": 0.06871486334884093,
+          "KL": 2405.3919671313856,
+          "TE": 8.421486340417666e-05,
+          "Frobenius_norm": 1.0,
+          "Spectral_norm": 1.0,
+          "KL_norm": 0.0,
+          "TE_norm": 0.2074603330911473,
+          "score": 0.5518650832727868
+        },
+        {
+          "Model": "dcc_garch",
+          "Tickers Used": 488,
+          "Missing in Validation": 0,
+          "Missing in Model": 0,
+          "Frobenius": 0.06530677599651905,
+          "Spectral": 0.054353906276863595,
+          "KL": 2355750.8912825123,
+          "TE": 0.0003135505100738153,
+          "Frobenius_norm": 0.7785902546656326,
+          "Spectral_norm": 0.6246491865016445,
+          "KL_norm": 1.0,
+          "TE_norm": 1.0,
+          "score": 0.8508098602918193
+        }
+      ]
+    }
+  },
+  "finished_at": "2025-12-27 20:02:53",
+  "total_elapsed_s": 668.9867713451385
+}
