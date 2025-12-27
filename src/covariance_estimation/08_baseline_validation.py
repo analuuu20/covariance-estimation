@@ -39,20 +39,48 @@ import numpy as np
 # ---------------------------------------------------------------------
 def load_validation(path="data/validation_returns.csv"):
     print(f"[INFO] Loading validation dataset: {path}")
-    df = pd.read_csv(path)
+    df = pd.read_csv(path, parse_dates=["Date"])
     print("[INFO] Validation dataset shape:", df.shape)
     return df
 
 
 # ---------------------------------------------------------------------
-# 2. LOAD TRAIN TICKERS (FOR REORDERING AND CHECKS)
+# 2. LOAD TRAINING TICKERS
 # ---------------------------------------------------------------------
-def load_train_tickers(train_cov_path="results/training/baseline/baseline_cov_matrix.csv"):
-    print(f"[INFO] Loading training covariance matrix from: {train_cov_path}")
-    cov = pd.read_csv(train_cov_path, index_col=0)
-    tickers = list(cov.columns)
-    print(f"[INFO] Number of training tickers: {len(tickers)}")
-    return tickers
+def load_canonical_tickers():
+    """
+    Load canonical ticker universe derived during training.
+    Priority:
+      1) DCC-GARCH canonical_tickers_used.txt
+      2) Graphical Lasso covariance CSV
+      3) Ledoit-Wolf covariance CSV
+    """
+
+    print("[INFO] Loading canonical ticker universe from training artifacts...")
+
+    dcc_path = "results/training/dcc_garch/canonical_tickers_used.txt"
+    gl_path = "results/training/graphical_lasso/gl_covariance_matrix.csv"
+    lw_path = "results/training/ledoit_wolf/lw_covariance_matrix.csv"
+
+    if os.path.exists(dcc_path):
+        tickers = pd.read_csv(dcc_path, header=None)[0].astype(str).tolist()
+        print(f"[INFO] Canonical tickers loaded from DCC-GARCH: {len(tickers)}")
+        return tickers
+
+    if os.path.exists(gl_path):
+        tickers = list(pd.read_csv(gl_path, index_col=0).index.astype(str))
+        print(f"[INFO] Canonical tickers loaded from Graphical Lasso: {len(tickers)}")
+        return tickers
+
+    if os.path.exists(lw_path):
+        tickers = list(pd.read_csv(lw_path, index_col=0).index.astype(str))
+        print(f"[INFO] Canonical tickers loaded from Ledoit-Wolf: {len(tickers)}")
+        return tickers
+
+    raise FileNotFoundError(
+        "[ERROR] No canonical ticker source found. "
+        "Training must be run before baseline validation."
+    )
 
 
 # ---------------------------------------------------------------------
@@ -60,50 +88,44 @@ def load_train_tickers(train_cov_path="results/training/baseline/baseline_cov_ma
 # ---------------------------------------------------------------------
 def pivot_validation(df):
     print("[INFO] Pivoting validation dataset to wide format...")
-    df["Date"] = pd.to_datetime(df["Date"])
-
-    pivot = df.pivot_table(
-        index="Date",
-        columns="Ticker",
-        values="LogReturn"
-    )
-
+    pivot = df.pivot(index="Date", columns="Ticker", values="LogReturn")
     print("[INFO] Validation wide matrix shape:", pivot.shape)
     return pivot
 
 
 # ---------------------------------------------------------------------
-# 4. CHECK TICKER CONSISTENCY & ALIGN ORDER
+# 4. ALIGN TO CANONICAL TICKERS
 # ---------------------------------------------------------------------
-def align_to_train_tickers(pivot_valid, train_tickers):
+def align_to_canonical_tickers(pivot_valid, canonical_tickers):
     valid_tickers = set(pivot_valid.columns)
 
-    missing = [t for t in train_tickers if t not in valid_tickers]
-    extra = [t for t in valid_tickers if t not in train_tickers]
+    missing = [t for t in canonical_tickers if t not in valid_tickers]
+    extra = [t for t in valid_tickers if t not in canonical_tickers]
 
-    print("[INFO] Checking ticker consistency with training set...")
-    print(f"[INFO] Missing tickers in validation: {missing}")
-    print(f"[INFO] Extra tickers in validation (ignored): {extra}")
+    print("[INFO] Checking ticker consistency with canonical universe...")
+    print(f"[INFO] Missing tickers in validation: {len(missing)}")
+    print(f"[INFO] Extra tickers in validation (ignored): {len(extra)}")
 
-    # keep only the tickers that exist in both
-    pivot_valid = pivot_valid.reindex(columns=train_tickers)
+    if missing:
+        raise ValueError(
+            "[ERROR] Validation data is missing canonical tickers. "
+            "Baseline validation aborted to preserve comparability."
+        )
 
-    return pivot_valid
+    # Reorder & restrict
+    return pivot_valid.loc[:, canonical_tickers]
 
 
 # ---------------------------------------------------------------------
-# 5. MILD IMPUTATION (same as train)
+# 5. MILD IMPUTATION (IDENTICAL TO TRAINING)
 # ---------------------------------------------------------------------
 def mild_impute(pivot):
     print("[INFO] Applying mild imputation...")
+    pivot = pivot.ffill().bfill()
 
-    pivot = pivot.copy()
-
-    pivot = pivot.ffill()
-    pivot = pivot.bfill()
-
-    col_means = pivot.mean()
-    pivot = pivot.fillna(col_means)
+    remaining = pivot.isna().sum().sum()
+    if remaining > 0:
+        pivot = pivot.fillna(pivot.mean())
 
     print("[INFO] Mild imputation complete.")
     return pivot
@@ -125,25 +147,25 @@ def compute_covariance(pivot):
 def save_validation_cov(cov, outdir="results/validation/baseline"):
     os.makedirs(outdir, exist_ok=True)
     outfile = os.path.join(outdir, "baseline_cov_matrix_validation.csv")
-    cov.to_csv(outfile, index=True)
-    print(f"[INFO] Validation covariance matrix saved to: {outfile}")
+    cov.to_csv(outfile)
+    print(f"[SAVE] Validation covariance matrix saved to: {outfile}")
 
 
 # ---------------------------------------------------------------------
-# 8. FULL PIPELINE FOR BASELINE VALIDATION
+# 8. FULL PIPELINE
 # ---------------------------------------------------------------------
 def baseline_validation():
-    print("==== BASELINE VALIDATION COVARIANCE MODULE START ====")
+    print("\n==== BASELINE VALIDATION START ====\n")
 
     df_valid = load_validation()
-    train_tickers = load_train_tickers()
+    canonical_tickers = load_canonical_tickers()
     pivot_valid = pivot_validation(df_valid)
-    pivot_valid = align_to_train_tickers(pivot_valid, train_tickers)
+    pivot_valid = align_to_canonical_tickers(pivot_valid, canonical_tickers)
     pivot_valid = mild_impute(pivot_valid)
     cov_valid = compute_covariance(pivot_valid)
     save_validation_cov(cov_valid)
 
-    print("==== BASELINE VALIDATION COVARIANCE MODULE COMPLETED ====")
+    print("\n==== BASELINE VALIDATION COMPLETED SUCCESSFULLY ====\n")
 
 
 if __name__ == "__main__":
