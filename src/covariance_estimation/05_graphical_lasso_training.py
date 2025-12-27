@@ -1,13 +1,17 @@
 """
-Graphical Lasso Covariance Estimation Module
-===========================================
+GRAPHICAL LASSO COVARIANCE ESTIMATION MODULE:
 
-This script:
+This module fits a Graphical Lasso model to estimate a sparse inverse covariance matrix
+from financial asset log-returns. The Graphical Lasso applies L1 regularization to
+promote sparsity in the precision matrix, which is useful for high-dimensional
+financial data where the number of assets may approach or exceed the number of observations.
+
+The pipeline follows these steps:
 1. Loads long-format asset returns (train_returns.csv)
 2. Converts to wide format (Date x Ticker)
 3. Cleans + imputes missing data
 4. Fits a Graphical Lasso sparse inverse covariance estimator
-5. Saves:
+5. It outputs:
    - covariance matrix (CSV)
    - precision (inverse covariance) matrix (CSV)
    - trained model + tickers (pickle)
@@ -164,11 +168,11 @@ def save_plots(cov, precision, tickers, outdir="results/training/graphical_lasso
 
 
 # =========================================================
-# 7. PUBLIC TRAINING FUNCTION
+# 7. FULL PIPELINE FOR GRAPHICAL LASSO TRAINING
 # =========================================================
 def graphical_lasso_training():
     """
-    Public function used by main.py and validation pipeline.
+    Function used by main.py and validation pipeline.
     Returns:
         model     GraphicalLassoCV fitted model
         cov       covariance matrix

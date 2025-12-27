@@ -1,30 +1,30 @@
 """
-05_dcc_garch_multigarch_lowmem.py
+DCC GARCH TRAINING MODULE:
 
-Academic-style DCC-GARCH training using the updated 'multigarch' package
-with low-memory mode enabled.
+This module performs a DCC-GARCH training using the updated 'multigarch' package
+with low-memory mode enabled. The DCC-GARCH model captures dynamic correlations
+among multiple financial asset returns, allowing for time-varying covariance estimation.
 
-Enhancements in this version:
------------------------------
-- The final covariance and correlation matrices are saved with tickers
-  preserved as index/columns.
-- The fitted DCC model (pickle file) now also stores the tickers so that
-  validation and rolling evaluation stages always maintain consistent
-  ordering.
-- The main user-facing function is now named `dcc_garch_training()` to
-  allow standardized usage from the main pipeline.
+The pipeline follows these steps:
+1. Loads long-format asset returns (train_returns.csv)
+2. Converts to wide format (Date x Ticker)
+3. Cleans + imputes missing data
+4. Fits a DCC-GARCH(1,1) model with low-memory mode
+5. It outputs:
+   - covariance matrix (CSV)
+   - correlation matrix (CSV)
+   - trained model + tickers (pickle)
+   - diagnostic plots
+6. Returns model, covariance, correlation, tickers
 
-Note: this variant includes a canonical-universe filtering step that
-loads the canonical list of tickers from previously produced training
-artifacts (Graphical Lasso or Ledoit-Wolf covariance CSV). This ensures
-all estimators are trained/evaluated on the same asset universe (491
-tickers) and avoids spurious differences due to mismatched asset sets.
-Using detectors derived from already-produced training outputs (not from
-future data) reduces look-ahead bias in comparative validation.
+Note: this module includes a filtering step that loads a list 
+of tickers from previously produced training artifacts (Graphical Lasso or 
+Ledoit-Wolf covariance CSV). This ensures all estimators are trained/evaluated 
+on the same asset universe and avoids spurious differences due 
+to mismatched asset sets. Using detectors derived from already-produced training 
+outputs reduces look-ahead bias in comparative validation.
+
 """
-# Improved DCC-GARCH Training Script
-# With automatic ticker filtering, alignment checks, detailed prints,
-# academic English comments, and stronger preprocessing.
 
 from __future__ import annotations
 import os
@@ -51,7 +51,7 @@ sns.set_theme(style="whitegrid", context="notebook", font_scale=1.05)
 # =====================================================================
 def load_and_pivot(path: str) -> Tuple[pd.DataFrame, list]:
     """Load long-format returns and pivot to wide format.
-    Academic-style: ensures chronological ordering and removes duplicated
+    This ensures chronological ordering and removes duplicated
     index values if present.
     """
     print(f"[INFO] Loading dataset from: {path}")
@@ -71,8 +71,8 @@ def load_and_pivot(path: str) -> Tuple[pd.DataFrame, list]:
 
 def forward_backward_imputation(wide: pd.DataFrame) -> pd.DataFrame:
     """Perform forward/backward fill.
-    Academic-style justification: DCC-GARCH requires a dense matrix because
-    its likelihood function is undefined when values are missing.
+    DCC-GARCH requires a dense matrix because its likelihood function is undefined when 
+    missing values are present in any particular time step.
     """
     print("[INFO] Performing forward/backward imputation...")
     filled = wide.ffill().bfill()
@@ -139,8 +139,9 @@ def plot_eigen_spectrum(mat: np.ndarray, outpath: str, title: str):
 
 
 # =====================================================================
-# MAIN TRAINING FUNCTION
+# FULL PIPELINE DCC-GARCH TRAINING FUNCTION
 # =====================================================================
+
 def dcc_garch_training(
     train_csv: str = "data/train_returns.csv",
     outdir: str = OUT_DIR,
@@ -149,18 +150,18 @@ def dcc_garch_training(
 ):
     """
     Train a DCC-GARCH(1,1) model in low-memory mode.
-
-    Includes improvements:
-    - Automatic removal of fully-NaN tickers.
-    - Full alignment reporting.
-    - Academic-style detailed comments for methodological clarity.
-    - Additional diagnostics.
+    1. Loads long-format asset returns from `train_csv`.
+    2. Pivots to wide format (Date x Ticker).
+    3. Cleans + imputes missing data.
+    4. Fits DCC-GARCH(1,1) with low_memory=True.
+    5. Saves:
+       - final covariance matrix (CSV)
+       - final correlation matrix (CSV)     
 
     This variant will try to restrict the training asset universe to a
-    canonical list (491 tickers) derived from previously produced training
-    artifacts (Graphical Lasso CSV preferred, fallback to Ledoit-Wolf).
-    This ensures consistency across estimators when comparing downstream
-    validation/performance metrics.
+    list derived from previously produced training artifacts (Graphical Lasso CSV 
+    preferred, fallback to Ledoit-Wolf). This ensures consistency across 
+    estimators when comparing downstream validation/performance metrics.
     """
 
     print("\n=============================")
@@ -173,16 +174,9 @@ def dcc_garch_training(
     wide, tickers_initial = load_and_pivot(train_csv)
 
     # -------------------------------------------------------------------
-    # Canonical ticker filtering: derive canonical universe (491 tickers)
-    # from already-trained models to ensure cross-model comparability.
-    #
-    # Academic justification:
-    # - Using the same asset universe across estimators avoids
-    #   confounding differences due to different asset sets (a source
-    #   of bias when comparing covariance estimates).
-    # - We prioritise Graphical Lasso output (assumed present) then
-    #   fall back to Ledoit-Wolf. If neither is present, proceed
-    #   without filtering but warn the user.
+    # Ticker filtering: derive canonical universe from already-trained models 
+    # to ensure cross-model comparability.
+    # This also reduces look-ahead bias in validation.
     # -------------------------------------------------------------------
 
     print("[INFO] Attempting to derive canonical ticker universe from trained models...")
@@ -217,10 +211,6 @@ def dcc_garch_training(
     if canonical_tickers is not None:
         n_can = len(canonical_tickers)
         print(f"[INFO] Canonical universe size (from {source_path}): {n_can} tickers")
-
-        # Check expected length (491) and warn if mismatch
-        if n_can != 491:
-            print(f"[WARN] Canonical ticker list length is {n_can}, expected 491. Proceeding but please verify.")
 
         # Compute intersection with available tickers in the training wide matrix
         available_in_data = [t for t in canonical_tickers if t in wide.columns]

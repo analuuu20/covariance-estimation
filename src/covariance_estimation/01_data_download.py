@@ -1,9 +1,8 @@
 """
-01_data_download.py
-
 DATA DOWNLOAD AND CLEANING MODULE:
 
-Utility functions to download, transform, clean, and validate financial time series data.
+This module develops the necessary utility functions to download, transform, clean, and validate 
+financial time series data that is used throughout the covariance estimation project.
 
 The pipeline follows these steps:
 
@@ -215,13 +214,13 @@ def validate_prices(df):
 def full_download(output_path="data/sp500_prices_clean.csv"):
     """
     Full data ingestion workflow with fixed date range:
-    15 Nov 2020 → 14 Nov 2025
+    15 Nov 2020 -> 14 Nov 2025
     """
 
     start = "2020-11-15"
     end   = "2025-11-14"
 
-    print("\n========== FULL DATA INGESTION PIPELINE ==========\n")
+    print("\n========== FULL DATA DOWNLOAD PIPELINE ==========\n")
     print(f"[INFO] Using fixed date range: {start} → {end}")
 
     tickers = get_sp500_tickers()
@@ -233,7 +232,7 @@ def full_download(output_path="data/sp500_prices_clean.csv"):
     cleaned.to_csv(output_path, index=False)
     print(f"\n[SAVE] CLEAN dataset saved to: {output_path}")
 
-    print("\n========== DATA DOWNLOAD AND CLEAN COMPLETED SUCCESSFULLY ==========\n")
+    print("\n========== DATA DOWNLOAD AND CLEANING COMPLETED SUCCESSFULLY ==========\n")
     return cleaned
 
 

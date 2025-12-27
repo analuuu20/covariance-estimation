@@ -1,18 +1,23 @@
 """
-Ledoit-Wolf Shrinkage Covariance Estimation Module
-==================================================
+LEDOIT-WOLF SHRINKAGE COVARIANCE ESTIMATION MODULE:
 
-This script:
+This module fits a Ledoit-Wolf shrinkage covariance estimator to financial asset log-returns.
+Ledoit-Wolf shrinkage improves the conditioning of the sample covariance matrix by
+shrinking it towards a structured target (the identity matrix scaled by the average variance).
+This is particularly useful in high-dimensional financial settings, where the
+number of assets may be large relative to the number of observations, leading to noisy
+and unstable covariance estimates.
+
+The pipeline follows these steps:
 1. Loads long-format asset returns (train_returns.csv)
 2. Converts to wide format (Date x Ticker)
 3. Cleans + imputes missing data
 4. Fits a Ledoit-Wolf shrinkage covariance estimator
-5. Saves:
+5. It outputs:
    - covariance matrix (CSV)
    - trained model + tickers (pickle)
    - diagnostic plots
 6. Returns model, covariance matrix and tickers
-
 
 """
 
@@ -100,7 +105,7 @@ def save_covariance_matrix(cov, tickers, outdir="results/training/ledoit_wolf"):
 
 def save_model_with_tickers(model, tickers, outdir="results/training/ledoit_wolf"):
     """
-    Save model AND tickers together so they can be loaded in validation.
+    Save model and tickers together so they can be loaded in validation.
     """
     os.makedirs(outdir, exist_ok=True)
     payload = {"model": model, "tickers": tickers}
@@ -139,11 +144,11 @@ def save_plots(cov, tickers, outdir="results/training/ledoit_wolf"):
 
 
 # =========================================================
-# 6. PUBLIC TRAINING FUNCTION
+# 6. FULL PIPELINE FOR LEDOIT-WOLF TRAINING
 # =========================================================
 def ledoit_wolf_training():
     """
-    Public function used by main.py and the validation pipeline.
+    Function used by main.py and the validation pipeline.
     Returns:
         model  (sklearn LedoitWolf)
         cov    np.array N x N covariance matrix

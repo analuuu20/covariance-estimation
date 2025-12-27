@@ -1,8 +1,7 @@
-# 09_full_validation_consolidated.py
 """
-Full validation + consolidation pipeline for covariance estimators (single script).
+FULL VALIDATION AND CONSOLIDATION OF RESULTS MODULE:
 
-This script performs:
+This module performs:
   - Load validation returns (long format) and pivot to wide matrix (Date x Ticker)
   - Mild imputation identical to training (ffill then bfill)
   - Baseline (realized) validation covariance from validation period
@@ -13,23 +12,24 @@ This script performs:
     For each model:
       - detect and report missing tickers
       - automatically align / reorder matrices by intersecting tickers
-      - compute STATIC distances between predicted covariance and realized covariance:
+      - compute static distances between predicted covariance and realized covariance:
             Frobenius norm: ||A - B||_F = sqrt(sum_ij (A_ij - B_ij)^2)
             Spectral norm (operator 2-norm): ||A - B||_2 = largest singular value of A-B
             KL divergence (multivariate Gaussian): KL(N(0,B) || N(0,A)) = 0.5*(tr(A^{-1} B) - n + ln(det A / det B))
             Portfolio tracking error (long-only GMVP TE)
       - rolling-window validation (window size configurable)
       - save per-model CSV reports and benchmark plots in results/validation/<model>/
-  - Consolidate static metrics across models, compute normalized score and ranking
+  - Consolidate static metrics across models, computing a normalized score and ranking
   - Save consolidated CSV and comparison plots in results/validation/
-  - Print intermediate progress so user can follow pipeline
 
-Notes (academic):
+
+  Metric explanations:
   - Frobenius norm measures overall matrix element-wise discrepancy.
-  - Spectral norm measures the largest distortion in Euclidean operator sense.
-  - KL divergence compares implied multivariate Gaussians — sensitive to eigenstructure and log-determinant differences.
-  - Portfolio TE measures economic significance: how much a GMVP built on predicted covariance differs ex-post.
-  - Consolidated "score" is a simple normalized aggregation (min-max normalization per metric, then average, lower=better).
+  - Spectral norm measures the largest distortion in any direction (worst-case).
+  - KL divergence compares the distance between two distributions. It is sensitive to differences in their shape, size, and orientation."
+  - Portfolio Tracking Error measures economic significance: how much a Global Minimum Variance Portfolio (GMVP) built on predicted 
+    covariance differs ex-post.
+  - Consolidated "score" is a normalized aggregation (min-max normalization per metric, then average, meaning thelower, the better).
 """
 
 from __future__ import annotations
@@ -244,7 +244,7 @@ def validate_single_model(model_name: str,
     model_mat = nearest_psd(model_aligned.values)
     val_mat = nearest_psd(val_cov_aligned.values)
 
-    # STATIC metrics
+    # Static metrics
     print("[INFO] Computing static metrics (Frobenius, Spectral, KL, TE)...")
     fro = frobenius_norm(model_mat, val_mat)
     spec = spectral_norm(model_mat, val_mat)
@@ -269,7 +269,7 @@ def validate_single_model(model_name: str,
     pd.DataFrame([static_metrics]).to_csv(static_csv, index=False)
     print(f"[SAVE] Static metrics saved: {static_csv}")
 
-    # ROLLING validation (compute rolling realized cov and distances to model_cov)
+    # Rolling validation (compute rolling realized cov and distances to model_cov)
     print(f"[INFO] Rolling-window validation (window={roll_window}) ...")
     rolling_records = []
     T = len(val_aligned_wide)
@@ -326,7 +326,7 @@ def consolidate_and_score(models_results: List[Dict]) -> pd.DataFrame:
     Build consolidated DataFrame with static metrics for all models,
     normalize metrics (min-max) and compute aggregated score (lower = better).
 
-    Score design (simple, transparent):
+    Score design:
       - For each metric M in {Frobenius, Spectral, KL, TE} compute normalized:
             M_norm = (M - min(Ms)) / (max(Ms) - min(Ms) + EPS)
       - Aggregated score = mean(M_norm) (equal weights)
@@ -385,15 +385,10 @@ def consolidate_and_score(models_results: List[Dict]) -> pd.DataFrame:
 
 
 # ---------------------------
-# MAIN EXECUTION
+# FULL PIPELINE FOR VALIDATION
 # ---------------------------
 def validation():
-    """
-    Full validation and consolidation pipeline.
-
-    """
-
-
+   
     print("\n[INFO] ===== STARTING FULL VALIDATION & CONSOLIDATION PIPELINE =====\n")
 
     # 1) Load validation returns and prepare wide matrix

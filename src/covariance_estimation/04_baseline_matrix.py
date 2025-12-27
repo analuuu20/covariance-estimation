@@ -1,30 +1,26 @@
 """
-04_baseline_matrix.py
+BASELINE COVARIANCE MATRIX COMPUTATION MODULE
 
-Baseline Sample Covariance Matrix Computation Module
-====================================================
-
-This script computes the baseline *sample covariance matrix* using
+This module computes the baseline sample covariance matrix using
 pairwise-complete observations from the training set of asset log-returns.
-
-MAIN IMPROVEMENT IN THIS VERSION:
----------------------------------
 The saved covariance matrix now includes row/column labels (tickers) 
 embedded directly in the CSV file. This ensures full compatibility with 
 later validation modules that require consistent asset ordering.
 
-STRUCTURE:
-----------
-The code is organized into modular functions so it can be imported and
-reused within the project's final pipeline (main.py).
+The pipeline follows these steps:
+1. Load the training log-returns dataset from:
+    data/train_returns.csv
+2. Pivot the long-format dataset into wide format.
+3. Compute the sample covariance matrix using pairwise-complete observations.
+4. Save the resulting covariance matrix to:
+    results/training/baseline/baseline_cov_matrix.csv
+5. Generate diagnostic plots.
 
-OUTPUTS:
---------
+It outputs: 
 - baseline_cov_matrix.csv 
 - covariance_heatmap.png
 - correlation_heatmap.png
 - variance_distribution.png
-
 
 """
 
@@ -121,7 +117,7 @@ def compute_covariance(pivot):
 
 
 # ---------------------------------------------------------------------
-# 4. SAVE RESULTS (WITH TICKERS INCLUDED)
+# 4. SAVE RESULTS 
 # ---------------------------------------------------------------------
 def save_results(cov_matrix, outdir="results/training/baseline"):
     """
@@ -188,7 +184,7 @@ def generate_plots(cov_matrix, pivot, outdir="results/training/baseline"):
 
 
 # ---------------------------------------------------------------------
-# 6. MAIN EXECUTION
+# 6. FULL PIPELINE
 # ---------------------------------------------------------------------
 def baseline_training():
     print("[INFO] Starting baseline covariance computation module...")

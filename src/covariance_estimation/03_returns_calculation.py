@@ -1,8 +1,12 @@
 """
-03_returns_calculation.py
+RETURNS CALCULATION MODULE:
 
 This module computes log-returns for a panel dataset containing multiple equity
-tickers. Log-returns are calculated independently for each asset to preserve
+tickers. Log-returns are preferred in financial econometrics due to their
+time-additivity, approximate normality, and scale invariance. Computing 
+returns separately for each ticker is essential because assets differ in
+listing dates and data availability, making pooled differencing invalid.
+Log-returns are calculated independently for each asset to preserve
 temporal integrity and avoid cross-sectional distortions. The script imports:
 
     data/train_prices.csv
@@ -23,17 +27,15 @@ import numpy as np
 import os
 from typing import Tuple
 
+# ---------------------------------------------------------------------
+# LOG-RETURN CALCULATION FUNCTION
+# ---------------------------------------------------------------------
+
 def compute_log_returns(df: pd.DataFrame) -> pd.DataFrame:
     """
     Compute log-returns for a panel dataset grouped by ticker.
 
-    Academic notes:
-    ---------------
-    Log-returns are preferred in financial econometrics due to their
-    time-additivity, approximate normality, and scale invariance 
-    (Campbell, Lo & MacKinlay, 1997). Computing returns separately for
-    each ticker is essential because assets differ in listing dates and
-    data availability, making pooled differencing invalid.
+    Log-Return is defined as: LogReturn_t = ln(P_t / P_{t-1}) = ln(P_t) - ln(P_{t-1})
 
     The `.transform()` method is used within the groupby operation to ensure 
     that the resulting series of returns is perfectly aligned with the original 
@@ -73,6 +75,9 @@ def compute_log_returns(df: pd.DataFrame) -> pd.DataFrame:
 
     return df
 
+# ---------------------------------------------------------------------
+# VALIDATION FUNCTION
+# ---------------------------------------------------------------------
 
 def validate_returns_dataset(df: pd.DataFrame, set_name: str):
     """
@@ -86,7 +91,7 @@ def validate_returns_dataset(df: pd.DataFrame, set_name: str):
 
 
 # ---------------------------------------------------------------------
-# MAIN EXECUTION
+# FULL PIPELINE FOR RETURNS CALCULATION
 # ---------------------------------------------------------------------
 
 if __name__ == "__main__":
@@ -103,14 +108,14 @@ if __name__ == "__main__":
 
     print("Starting Log-Return Calculation Pipeline...")
     
-    # --- 2. Load Data ---
+    # Load Data
     print(f"\n[STEP 1] Loading Training data from: {train_path}")
     train_df = pd.read_csv(train_path, parse_dates=["Date"])
     
     print(f"[STEP 1] Loading Validation data from: {val_path}")
     val_df = pd.read_csv(val_path, parse_dates=["Date"])
 
-    # --- 3. Compute Log-Returns ---
+    # Compute Log-Returns
     
     print("\n[STEP 2] Computing Log-Returns for Training Set...")
     train_returns = compute_log_returns(train_df)
@@ -118,11 +123,11 @@ if __name__ == "__main__":
     print("\n[STEP 2] Computing Log-Returns for Validation Set...")
     val_returns = compute_log_returns(val_df)
     
-    # --- 4. Validation Check ---
+    # Validation Check
     validate_returns_dataset(train_returns, "Training Set")
     validate_returns_dataset(val_returns, "Validation Set")
 
-    # --- 5. Save Results ---
+    # Save Results
     
     # Ensure the output directory exists
     os.makedirs(output_dir, exist_ok=True)
@@ -132,10 +137,10 @@ if __name__ == "__main__":
     train_returns.to_csv(train_output_path, index=False)
     val_returns.to_csv(val_output_path, index=False)
 
-    # --- Final Confirmation ---
+    # Final Confirmation
     print("\n=======================================================")
     print("SUCCESS: Log-returns datasets generated and ready for modeling.")
-    print(f"→ Training Returns saved to: {train_output_path}")
-    print(f"→ Validation Returns saved to: {val_output_path}")
+    print(f"-> Training Returns saved to: {train_output_path}")
+    print(f"-> Validation Returns saved to: {val_output_path}")
     print("The new datasets include 'LogReturn' and are clean (no initial NaN values).")
     print("=======================================================")

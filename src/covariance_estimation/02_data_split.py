@@ -1,19 +1,25 @@
 """
-02_data_split.py
-
 DATA SPLITTING MODULE:
 
 This module performs a chronological time-series split for a panel dataset
-containing multiple equities stacked vertically. Each ticker's price history is sorted
-and splitted individually into a training and validation set (80%/20%) to ensure methodological
-correctness and avoid cross-sectional leakage.
+containing multiple stocks stacked vertically. 
+Financial time-series must be split chronologically because future data from one ticker
+cannot be used to inform past model estimation for another ticker.
+For panel equity data, treating the dataset as a simple row-wise sequence
+is incorrect because tickers differ in history length and ordering. Therefore,
+each ticker must be split independently, maintaining temporal integrity.
+Each ticker's price history is sorted and splitted individually into a training and validation set, 
+following a 80%/20% split to ensure methodological correctness and avoid cross-sectional leakage.
 
 The pipeline follows these steps:
 
-The script loads the cleaned dataset generated before from:
-    data/sp500_prices_clean.csv
-
-It outputs:
+1. The script loads the cleaned dataset generated before from:
+    data/sp500_prices_clean.csv 
+2. Sorts the data by Ticker and Date to ensure proper chronological order.
+3. For each ticker, splits its time series into:
+    - Training set: first 80% of dates
+    - Validation set: last 20% of dates
+4. Saves the resulting datasets into CSV files for downstream tasks. It outputs:
     data/train_prices.csv
     data/validation_prices.csv
 """
@@ -25,13 +31,6 @@ import os
 def chronological_panel_split(df: pd.DataFrame, train_ratio: float = 0.8):
     """
     Perform a chronological split for each ticker in the panel dataset.
-    
-    Financial time-series must be split chronologically because future data from one ticker
-    cannot be used to inform past model estimation for another ticker.
-    For panel equity data, treating the dataset as a simple row-wise sequence
-    is incorrect because tickers differ in history length and ordering. Therefore,
-    each ticker must be split independently, maintaining temporal integrity.
-
     The standard split ratio is 80% training and 20% validation, applied per ticker.
 
     Parameters
@@ -111,7 +110,7 @@ def validate_split(train_df: pd.DataFrame, val_df: pd.DataFrame):
             print(f"[OK] {ticker}: no leakage.")
 
 # ---------------------------------------------------------------------
-# MAIN EXECUTION
+# FULL PIPELINE FOR DATA SPLITTING
 # ---------------------------------------------------------------------
 
 if __name__ == "__main__":

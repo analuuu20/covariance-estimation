@@ -1,21 +1,32 @@
 """
-Baseline Validation Covariance Matrix Computation
-=================================================
+BASELINE VALIDATION COVARIANCE MATRIX COMPUTATION MODULE:
 
-This module computes the baseline *sample covariance matrix* for the
+This module computes the baseline sample covariance matrix for the
 validation dataset, ensuring:
 
-1. **Same tickers used in training**
-2. **Same column order as training**
-3. **Same mild imputation procedure**
-4. Output saved WITH ticker/column labels for downstream compatibility
+1. Same tickers used in training
+2. Same column order as training
+3. Same mild imputation procedure
+4. Output saved with ticker/column labels for downstream compatibility
 
-INPUT :
-    - validation_returns.csv
-    - baseline_cov_matrix.csv   (TRAIN) --> used to extract ticker order
+The pipeline follows these steps:
+1. Load the validation log-returns dataset from:
+    data/validation_returns.csv
+2. Load the training baseline covariance matrix from:
+    results/training/baseline/baseline_cov_matrix.csv
+   to extract the list and order of tickers used during training.
+3. Pivot the long-format validation dataset into wide format.
+4. Align the validation dataset to the training tickers:
+   - Retain only tickers present in training
+   - Reorder columns to match training order
+5. Apply the same mild imputation procedure as used in training:
+   - Forward fill
+   - Backward fill
+   - Column mean imputation for any remaining NaNs
+6. Compute the sample covariance matrix using pairwise-complete observations.
+7. Save the resulting validation covariance matrix to:
+    results/validation/baseline/baseline_cov_matrix_validation.csv
 
-OUTPUT :
-    - baseline_cov_matrix_validation.csv  (VALIDATION)
 """
 
 import os
@@ -119,7 +130,7 @@ def save_validation_cov(cov, outdir="results/validation/baseline"):
 
 
 # ---------------------------------------------------------------------
-# 8. MAIN EXECUTION
+# 8. FULL PIPELINE FOR BASELINE VALIDATION
 # ---------------------------------------------------------------------
 def baseline_validation():
     print("==== BASELINE VALIDATION COVARIANCE MODULE START ====")
