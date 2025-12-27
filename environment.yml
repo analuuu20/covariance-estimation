@@ -192,7 +192,16 @@ dependencies:
   - zstd=1.5.7=h3691f8a_4
   - pip:
       - arch==8.0.0
+      - clarabel==0.11.1
+      - cvxpy==1.7.4
       - cython==3.2.2
+      - jinja2==3.1.6
+      - llvmlite==0.45.1
+      - markupsafe==3.0.3
+      - multigarch==0.1.0
       - mvgarch==1.2.3
+      - numba==0.62.1
+      - osqp==1.0.5
       - pmdarima==2.1.1
+      - scs==3.2.9
 prefix: /opt/conda/envs/covariance-estimation
