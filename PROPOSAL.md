@@ -9,15 +9,15 @@ Understanding portfolio performance, risk, and asset correlations can be challen
         
 # Planned approach and technologies:
 
-The project will be following the subject requirements, implemented in Python 3.10+ and using modular design principles. In that regard, the project will be developed according to the following structure:
+The project will be following the class requirements, implemented in Python 3.10+ and using modular design principles. In that regard, the project will be developed according to the following structure:
 
-    - Data collection: the primary data source will be historical daily adjusted stock prices extracted from Yahoo Finance. A sample composed by S&P 500 company stocks for the last five years will be used to test the different covariance estimators.
+    - Data collection: the primary data source will be historical daily adjusted stock prices extracted from Yahoo Finance. A sample composed by the S&P 500 index company stocks for the last five years will be used to test the different covariance estimators.
 
     - Data processing: the packages to be used are Pandas and request libraries to clean the prices time series and extract the data set in a csv file.
 
-    - Covariance estimation methodologies: once the database is standardized, volatility and correlations will be computed using different methodologies. A DCC-GARCH model will be used as the baseline methodology and a Ledoit–Wolf Shrinkage, Optimally-Shrunk Covariance Estimation (OAS), Principal Component Analysis (PCA) and Graphical Lasso (GLASSO) models will be executed to attempt other methodologies to estimate the variance of the sample. 
+    - Covariance estimation methodologies: once the database is standardized, the covariance matrix will be computed using different methodologies. A conventional covariance matriz will be used as the baseline methodology and Ledoit–Wolf Shrinkage, Dynamic Conditional Correlation - Generalized Autoregressive Conditional Heteroskedasticity (DCC-GARCH) model and Graphical Lasso (GLASSO) models will be the other methodologies executed to attempt to outperform the variance estimation of the baseline. 
 
-    - Result comparison: the covariance matrices obtained will be compared one to another by making out-of-sample testing with rolling windows to determine the error between the model estimation and the historical outcome to define the best-performing methodology.
+    - Result comparison: the covariance matrices obtained will be compared one to another by using static metrics and making out-of-sample testing with rolling windows to determine the error between the model estimation and the historical outcome to define the best-performing methodology.
 
 # Expected challenges:
     
@@ -27,7 +27,7 @@ The project will be following the subject requirements, implemented in Python 3.
     
 # Success criteria: 
 
-The implementation of at least three estimators for the covariances. Additionally, it is expected to find the best-performing estimator compared to the baseline method by out-of-sample prediction accuracy for portfolio variance.
+The implementation of the three proposed estimators for the covariances. Additionally, it is expected to find the best-performing estimator compared to the baseline method by out-of-sample prediction accuracy and a normalized score based on static metrics to compare each model results.
 
 # Stretch goals: 
 
