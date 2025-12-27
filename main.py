@@ -1,6 +1,7 @@
-#!/usr/bin/env python3
 """
 main.py
+
+This is the main orchestration script for the Covariance Estimation project. 
 
 Orchestrates the full pipeline for covariance estimation:
   1) Data ingestion & cleaning (01_data_download)
@@ -15,10 +16,10 @@ Orchestrates the full pipeline for covariance estimation:
 
 Important design decisions:
  - Modules are loaded from `src/covariance_estimation/` using importlib,
-   to allow filenames starting with digits (which are not valid identifiers).
+   to allow filenames starting with digits.
  - Each high-level step prints concise, informative progress messages.
  - The script tries to reuse function return values where available, but
-   also respects each module's own I/O (many modules read/write standard CSVs).
+   also respects each module's own input and output (many modules read/write standard CSVs).
 """
 
 from __future__ import annotations
