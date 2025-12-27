@@ -271,7 +271,7 @@ def main():
         t0 = time.time()
         mod = loaded_modules["dcc"]
         if hasattr(mod, "dcc_garch_training"):
-            # call with defaults - module itself tries to align to canonical tickers (491) if available
+            # call with defaults - module itself tries to align to canonical tickers if available
             dcc_results = mod.dcc_garch_training()
             run_summary["steps"]["07_dcc_garch"] = {
                 "status": "ok",
