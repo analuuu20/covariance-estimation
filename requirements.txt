@@ -13,4 +13,6 @@ requests
 lxml
 joblib
 seaborn
+# the following package is needed for DCC-GARCH model, has to be installed via pip: 
+# pip install git+https://github.com/mechanicpanic/multigarch.git
 multigarch
