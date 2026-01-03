@@ -80,6 +80,8 @@ Final consolidated ranking:
 - DCC-GARCH: 0.85
 - Winner: Ledoit-Wolf Shrinkage
 
+# Video presentation
+https://youtu.be/9GRdEFZ7vu0
 
 # Author
 Ana Lucia Clavijo Martinez (AnaLucia.ClavijoMartinez@unil.ch)

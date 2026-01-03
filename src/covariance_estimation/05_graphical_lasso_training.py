@@ -80,6 +80,8 @@ def fit_graphical_lasso(wide):
 
     print("[INFO] Graphical Lasso fitting completed.")
     print(f"[INFO] Selected alpha: {gl.alpha_}")
+    sparsity = np.mean(gl.precision_ == 0)
+    print(f"Sparsity: {sparsity:.2%}")
 
     cov = gl.covariance_
     precision = gl.precision_

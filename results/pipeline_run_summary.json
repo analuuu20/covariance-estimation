@@ -1,21 +1,21 @@
 {
-  "started_at": "2025-12-27 19:51:44",
+  "started_at": "2025-12-28 18:54:21",
   "steps": {
     "01_data_download": {
       "status": "ok",
-      "elapsed_s": 36.650803089141846
+      "elapsed_s": 39.0075466632843
     },
     "02_data_split": {
       "status": "ok",
-      "elapsed_s": 23.61908197402954
+      "elapsed_s": 22.986870288848877
     },
     "03_returns_calculation": {
       "status": "ok",
-      "elapsed_s": 8.020025491714478
+      "elapsed_s": 7.817729234695435
     },
     "04_baseline_matrix": {
       "status": "ok",
-      "elapsed_s": 7.172677755355835
+      "elapsed_s": 6.869826793670654
     },
     "05_graphical_lasso": {
       "status": "ok",
@@ -40,49 +40,49 @@
           "Tickers Used": 488,
           "Missing in Validation": 0,
           "Missing in Model": 0,
-          "Frobenius": 0.04044438362641426,
-          "Spectral": 0.03045477024252813,
-          "KL": 2568.2362876146412,
-          "TE": 2.418247432095783e-05,
+          "Frobenius": 0.040444383624654086,
+          "Spectral": 0.030454768544512203,
+          "KL": 2568.2363326808177,
+          "TE": 2.418253326876787e-05,
           "Frobenius_norm": 0.0,
           "Spectral_norm": 0.0,
-          "KL_norm": 6.919694559537864e-05,
+          "KL_norm": 6.899248390741789e-05,
           "TE_norm": 0.0,
-          "score": 1.729923639884466e-05
+          "score": 1.724812097685447e-05
         },
         {
           "Model": "graphical_lasso",
           "Tickers Used": 488,
           "Missing in Validation": 0,
           "Missing in Model": 0,
-          "Frobenius": 0.07237695948530681,
-          "Spectral": 0.06871486334884093,
-          "KL": 2405.3919671313856,
-          "TE": 8.421486340417666e-05,
+          "Frobenius": 0.07237694964201631,
+          "Spectral": 0.06871485301035485,
+          "KL": 2405.391883689434,
+          "TE": 8.421485308961821e-05,
           "Frobenius_norm": 1.0,
           "Spectral_norm": 1.0,
           "KL_norm": 0.0,
-          "TE_norm": 0.2074603330911473,
-          "score": 0.5518650832727868
+          "TE_norm": 0.2080352739818373,
+          "score": 0.5520088184954594
         },
         {
           "Model": "dcc_garch",
           "Tickers Used": 488,
           "Missing in Validation": 0,
           "Missing in Model": 0,
-          "Frobenius": 0.06530677599651905,
-          "Spectral": 0.054353906276863595,
-          "KL": 2355750.8912825123,
-          "TE": 0.0003135505100738153,
-          "Frobenius_norm": 0.7785902546656326,
-          "Spectral_norm": 0.6246491865016445,
+          "Frobenius": 0.06525579834466716,
+          "Spectral": 0.05430306690792946,
+          "KL": 2362726.9772016956,
+          "TE": 0.00031275051826390633,
+          "Frobenius_norm": 0.7769940789137562,
+          "Spectral_norm": 0.6233205884505624,
           "KL_norm": 1.0,
           "TE_norm": 1.0,
-          "score": 0.8508098602918193
+          "score": 0.8500786668410796
         }
       ]
     }
   },
-  "finished_at": "2025-12-27 20:02:53",
-  "total_elapsed_s": 668.9867713451385
+  "finished_at": "2025-12-28 19:06:23",
+  "total_elapsed_s": 721.4514577388763
 }
